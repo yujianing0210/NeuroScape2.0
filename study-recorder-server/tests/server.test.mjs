@@ -46,6 +46,115 @@ describe('study recorder server', () => {
     ).toBe('P001');
   });
 
+  it('atomically persists participant state and generates analysis exports', async () => {
+    const resultsRoot = await mkdtemp(
+      join(tmpdir(), 'neuroscape-participant-'),
+    );
+    server = createStudyServer({ resultsRoot });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    await fetch(
+      `${base}/api/study/sessions/P007/session-1/artifacts/final-session-bundle.json`,
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          eegMetrics: [
+            {
+              timestampMs: 10_000,
+              theta: 0.12,
+              beta: 0.08,
+              tbr: -0.41,
+              tbrBaseline: -0.35,
+              valid: true,
+              qualityScore: 0.94,
+              artifactFlags: [],
+            },
+          ],
+        }),
+      },
+    );
+    const record = {
+      schemaVersion: '1.0',
+      questionnaireVersion: '1.1',
+      participantId: 'P007',
+      createdAtIso: '2026-01-01T00:00:00Z',
+      updatedAtIso: '2026-01-01T00:00:00Z',
+      calibrationCompleted: true,
+      conditionOrder: ['non-adaptive', 'adaptive'],
+      recommendedOrder: 'AB',
+      actualOrder: 'AB',
+      assignmentSource: 'participant_id_parity',
+      sessions: [
+        {
+          sessionNumber: 1,
+          sessionId: 'session-1',
+          condition: 'non-adaptive',
+          sessionDataFinalized: true,
+          attemptStatus: 'accepted',
+        },
+      ],
+      questionnaireComplete: false,
+      status: 'incomplete',
+      calibrationQuestionnaire: {
+        questionnaireVersion: '1.1',
+        participantId: 'P007',
+        stage: 'calibration_post',
+        shownAtIso: '2026-01-01T00:00:00Z',
+        submittedAtIso: '2026-01-01T00:01:00Z',
+        answers: [{ questionId: 'C1', value: 5 }],
+      },
+    };
+    const saved = await fetch(`${base}/api/study/participants/P007/state`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(record),
+    });
+    expect(saved.status).toBe(200);
+    expect(
+      (await (await fetch(`${base}/api/study/participants/P007/state`)).json())
+        .participantId,
+    ).toBe('P007');
+    expect(
+      await readFile(
+        join(resultsRoot, 'P007', 'questionnaire-long.csv'),
+        'utf8',
+      ),
+    ).toContain('calibration_attention');
+    expect(
+      JSON.parse(
+        await readFile(
+          join(resultsRoot, 'P007', 'participant-report.json'),
+          'utf8',
+        ),
+      ).calibration.C1,
+    ).toBe(5);
+    expect(
+      await readFile(
+        join(resultsRoot, 'P007', 'eeg-comparison-long.csv'),
+        'utf8',
+      ),
+    ).toContain('log_tbr');
+    expect(
+      JSON.parse(
+        await readFile(
+          join(resultsRoot, 'P007', 'participant-report.json'),
+          'utf8',
+        ),
+      ).eegComparison.nonAdaptive.metricCount,
+    ).toBe(1);
+    expect(
+      (
+        await fetch(
+          `${base}/api/study/sessions/P007/session-1/artifacts/final-session-bundle.json`,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (await fetch(`${base}/api/study/participants/P008/state`)).status,
+    ).toBe(404);
+  });
+
   it('proxies structured LLM requests without exposing the API key', async () => {
     const calls = [];
     server = createStudyServer({

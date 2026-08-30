@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { createWriteStream } from 'node:fs';
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +26,219 @@ function json(response, status, payload) {
     'access-control-allow-origin': '*',
   });
   response.end(JSON.stringify(payload));
+}
+
+const csvCell = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+const answer = (submission, id) =>
+  submission?.answers?.find((item) => item.questionId === id)?.value ?? null;
+function participantOutputs(record) {
+  const submissions = [
+    record.calibrationQuestionnaire,
+    ...record.sessions.flatMap((session) => [session.pre, session.post]),
+    record.finalComparison,
+  ].filter(Boolean);
+  const metadata = {
+    C1: 'calibration_attention',
+    C2: 'calibration_mind_wandering',
+    C3: 'calibration_relaxation',
+    M1: 'momentary_relaxation',
+    Q1: 'present_moment_attention',
+    Q2: 'mind_wandering',
+    Q3: 'session_relaxation',
+    Q4: 'spatial_presence',
+    Q5: 'soundscape_coherence',
+    Q6: 'distraction',
+    COMFORT: 'comfort',
+    COMFORT_TEXT: 'comfort_text',
+    F1: 'session_1_responsiveness',
+    F2: 'session_2_responsiveness',
+    F3: 'preference',
+  };
+  const headers = [
+    'participant_id',
+    'questionnaire_version',
+    'stage',
+    'session_number',
+    'condition',
+    'session_id',
+    'question_id',
+    'construct',
+    'value_numeric',
+    'value_text',
+    'shown_at_iso',
+    'submitted_at_iso',
+  ];
+  const rows = submissions.flatMap((submission) =>
+    submission.answers.map((item) => [
+      record.participantId,
+      record.questionnaireVersion,
+      submission.stage,
+      submission.sessionNumber ?? '',
+      submission.condition ?? '',
+      submission.sessionId ?? '',
+      item.questionId,
+      metadata[item.questionId] ?? '',
+      typeof item.value === 'number' ? item.value : '',
+      typeof item.value === 'number' ? '' : item.value,
+      submission.shownAtIso,
+      submission.submittedAtIso,
+    ]),
+  );
+  const csv =
+    [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\n') +
+    '\n';
+  const conditions = {};
+  for (const session of record.sessions.filter(
+    (item) =>
+      item.attemptStatus !== 'failed' && item.attemptStatus !== 'excluded',
+  )) {
+    const preRelaxation = answer(session.pre, 'M1');
+    const postRelaxation = answer(session.post, 'M1');
+    conditions[
+      session.condition === 'non-adaptive' ? 'nonAdaptive' : 'adaptive'
+    ] = {
+      sessionId: session.sessionId,
+      sessionNumber: session.sessionNumber,
+      momentaryRelaxationPre: preRelaxation,
+      momentaryRelaxationPost: postRelaxation,
+      momentaryRelaxationDelta:
+        typeof preRelaxation === 'number' && typeof postRelaxation === 'number'
+          ? postRelaxation - preRelaxation
+          : null,
+      ...Object.fromEntries(
+        ['Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6'].map((id) => [
+          id,
+          answer(session.post, id),
+        ]),
+      ),
+      comfort: answer(session.post, 'COMFORT'),
+      comfortText: answer(session.post, 'COMFORT_TEXT'),
+      responsiveness: answer(
+        record.finalComparison,
+        session.sessionNumber === 1 ? 'F1' : 'F2',
+      ),
+    };
+  }
+  const rawPreference = answer(record.finalComparison, 'F3');
+  const preferredNumber =
+    rawPreference === 'Session 1'
+      ? 1
+      : rawPreference === 'Session 2'
+        ? 2
+        : null;
+  return {
+    csv,
+    report: {
+      participantId: record.participantId,
+      questionnaireVersion: record.questionnaireVersion,
+      recommendedOrder: record.recommendedOrder,
+      actualOrder: record.actualOrder,
+      assignmentSource: record.assignmentSource,
+      conditionOrder: record.conditionOrder,
+      calibration: Object.fromEntries(
+        ['C1', 'C2', 'C3'].map((id) => [
+          id,
+          answer(record.calibrationQuestionnaire, id),
+        ]),
+      ),
+      conditions,
+      preference: {
+        raw: rawPreference,
+        mappedCondition: preferredNumber
+          ? (record.sessions.find(
+              (item) => item.sessionNumber === preferredNumber,
+            )?.condition ?? null)
+          : null,
+      },
+    },
+  };
+}
+
+async function participantEegOutputs(record, resultsRoot) {
+  const headers = [
+    'participant_id',
+    'session_number',
+    'condition',
+    'session_id',
+    'timestamp_ms',
+    'theta',
+    'beta',
+    'tbr',
+    'tbr_baseline',
+    'tbr_representation',
+    'valid',
+    'quality_score',
+    'artifact_flags',
+  ];
+  const rows = [],
+    summary = {};
+  for (const session of record.sessions.filter(
+    (item) =>
+      item.attemptStatus !== 'failed' && item.attemptStatus !== 'excluded',
+  )) {
+    try {
+      const recording = JSON.parse(
+        await readFile(
+          resolve(
+            resultsRoot,
+            record.participantId,
+            session.sessionId,
+            'final-session-bundle.json',
+          ),
+          'utf8',
+        ),
+      );
+      const metrics = recording.eegMetrics ?? [];
+      for (const metric of metrics)
+        rows.push([
+          record.participantId,
+          session.sessionNumber,
+          session.condition,
+          session.sessionId,
+          metric.timestampMs,
+          metric.theta,
+          metric.beta,
+          metric.tbr,
+          metric.tbrBaseline,
+          'log_tbr',
+          metric.valid,
+          metric.qualityScore,
+          (metric.artifactFlags ?? []).join('|'),
+        ]);
+      summary[
+        session.condition === 'non-adaptive' ? 'nonAdaptive' : 'adaptive'
+      ] = {
+        sessionId: session.sessionId,
+        metricCount: metrics.length,
+        tbrRepresentation: 'log_tbr',
+        baselineAvailable: metrics.some((metric) =>
+          Number.isFinite(metric.tbrBaseline),
+        ),
+      };
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+      summary[
+        session.condition === 'non-adaptive' ? 'nonAdaptive' : 'adaptive'
+      ] = {
+        sessionId: session.sessionId,
+        metricCount: 0,
+        tbrRepresentation: 'log_tbr',
+        baselineAvailable: false,
+      };
+    }
+  }
+  return {
+    csv:
+      [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\n') +
+      '\n',
+    summary: { ...summary, export: 'eeg-comparison-long.csv' },
+  };
+}
+
+async function atomicWrite(destination, content) {
+  const temporary = `${destination}.tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  await writeFile(temporary, content);
+  await rename(temporary, destination);
 }
 
 async function readJson(request, maximumBytes = 1024 * 1024) {
@@ -124,6 +337,12 @@ export function createStudyServer(options = {}) {
     const finalizeMatch = url.pathname.match(
       /^\/api\/study\/sessions\/([^/]+)\/([^/]+)\/finalize$/,
     );
+    const participantStateMatch = url.pathname.match(
+      /^\/api\/study\/participants\/([^/]+)\/state$/,
+    );
+    const participantReportMatch = url.pathname.match(
+      /^\/api\/study\/participants\/([^/]+)\/report$/,
+    );
     try {
       const llmMatch = url.pathname.match(
         /^\/api\/llm\/(decision-1|decision-2)$/,
@@ -158,11 +377,62 @@ export function createStudyServer(options = {}) {
           await writeRequestBody(request, temporary, maximumBytes);
           await rm(destination, { force: true });
           await rename(temporary, destination);
+          if (
+            filename === 'questionnaire.json' ||
+            filename === 'questionnaire.csv'
+          ) {
+            const manifestPath = resolve(sessionDirectory, 'manifest.json');
+            try {
+              const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+              const bytes = Buffer.byteLength(await readFile(destination));
+              manifest.files = (manifest.files ?? []).filter(
+                (item) => item.filename !== filename,
+              );
+              manifest.files.push({
+                filename,
+                mimeType:
+                  request.headers['content-type'] ?? 'application/octet-stream',
+                bytes,
+              });
+              await atomicWrite(
+                manifestPath,
+                JSON.stringify(manifest, null, 2),
+              );
+            } catch (error) {
+              if (error?.code !== 'ENOENT') throw error;
+            }
+          }
         } catch (error) {
           await rm(temporary, { force: true });
           throw error;
         }
         json(response, 201, { ok: true, participantId, sessionId, filename });
+        return;
+      }
+      if (request.method === 'GET' && artifactMatch) {
+        const [, participantId, sessionId, filename] = artifactMatch.map(
+          (value) => decodeURIComponent(value),
+        );
+        validateStudyPath(participantId, sessionId, filename);
+        try {
+          const content = await readFile(
+            resolve(resultsRoot, participantId, sessionId, filename),
+          );
+          const mimeType = filename.endsWith('.json')
+            ? 'application/json'
+            : filename.endsWith('.csv')
+              ? 'text/csv'
+              : 'application/octet-stream';
+          response.writeHead(200, {
+            'content-type': mimeType,
+            'access-control-allow-origin': '*',
+          });
+          response.end(content);
+        } catch (error) {
+          if (error?.code === 'ENOENT')
+            json(response, 404, { ok: false, error: 'Artifact not found.' });
+          else throw error;
+        }
         return;
       }
       if (request.method === 'POST' && finalizeMatch) {
@@ -186,6 +456,85 @@ export function createStudyServer(options = {}) {
           sessionId,
           directory: sessionDirectory,
         });
+        return;
+      }
+      if (request.method === 'GET' && participantStateMatch) {
+        const participantId = decodeURIComponent(participantStateMatch[1]);
+        validateStudyPath(participantId, 'participant');
+        try {
+          const record = JSON.parse(
+            await readFile(
+              resolve(resultsRoot, participantId, 'participant-study.json'),
+              'utf8',
+            ),
+          );
+          json(response, 200, record);
+        } catch (error) {
+          if (error?.code === 'ENOENT')
+            json(response, 404, {
+              ok: false,
+              error: 'Participant record not found.',
+            });
+          else throw error;
+        }
+        return;
+      }
+      if (request.method === 'PUT' && participantStateMatch) {
+        const participantId = decodeURIComponent(participantStateMatch[1]);
+        validateStudyPath(participantId, 'participant');
+        const record = await readJson(request, 4 * 1024 * 1024);
+        if (
+          record?.participantId !== participantId ||
+          record?.questionnaireVersion !== '1.1' ||
+          !Array.isArray(record?.sessions)
+        )
+          throw new Error('Invalid participant study record.');
+        const directory = resolve(resultsRoot, participantId);
+        await mkdir(directory, { recursive: true });
+        const outputs = participantOutputs(record);
+        const eegOutputs = await participantEegOutputs(record, resultsRoot);
+        outputs.report.eegComparison = eegOutputs.summary;
+        await atomicWrite(
+          resolve(directory, 'participant-study.json'),
+          JSON.stringify(record, null, 2),
+        );
+        await atomicWrite(
+          resolve(directory, 'questionnaire-long.csv'),
+          outputs.csv,
+        );
+        await atomicWrite(
+          resolve(directory, 'participant-report.json'),
+          JSON.stringify(outputs.report, null, 2),
+        );
+        await atomicWrite(
+          resolve(directory, 'eeg-comparison-long.csv'),
+          eegOutputs.csv,
+        );
+        json(response, 200, { ok: true, participantId, directory });
+        return;
+      }
+      if (request.method === 'GET' && participantReportMatch) {
+        const participantId = decodeURIComponent(participantReportMatch[1]);
+        validateStudyPath(participantId, 'participant');
+        try {
+          json(
+            response,
+            200,
+            JSON.parse(
+              await readFile(
+                resolve(resultsRoot, participantId, 'participant-report.json'),
+                'utf8',
+              ),
+            ),
+          );
+        } catch (error) {
+          if (error?.code === 'ENOENT')
+            json(response, 404, {
+              ok: false,
+              error: 'Participant report not found.',
+            });
+          else throw error;
+        }
         return;
       }
       json(response, 404, { ok: false, error: 'Not found.' });

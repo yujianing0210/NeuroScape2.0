@@ -1,5 +1,34 @@
 # NeuroScape
 
+## Questionnaire study flow
+
+The local study UI keeps Questionnaire v1.1 inside the participant flow. After calibration, hand the device to the participant for **Calibration Reflection** (C1–C3). Before each prescribed condition, the participant completes the neutral **Session 1/2** M1 screen; EEG timing and meditation audio begin only after that response is saved. At session end, core EEG/audio artifacts are uploaded before the participant completes M1 post, Q1–Q6, and the comfort check. The session receives `_COMPLETE.json` only after that questionnaire is saved.
+
+After both counterbalanced conditions, the participant completes F1–F3 without seeing true condition labels. The handoff screen then tells them to return the device. The researcher can open the participant dashboard from that screen or Study Home. The dashboard maps Session 1/2 to Adaptive/Non-Adaptive, shows raw item values and transparent differences, and can be printed with **Print / Save PDF**.
+
+Study progress reloads when a pseudonymous participant ID is entered. If saving fails, keep the questionnaire open and press **Submit** again; do not restart the meditation. Generated files are local:
+
+Study Home recommends the counterbalanced order from the numeric participant ID: odd IDs use **A/B (Non-Adaptive → Adaptive)** and even IDs use **B/A (Adaptive → Non-Adaptive)**. An investigator may override this before Session 1 starts; the recommended order, actual order, and assignment source are saved in `participant-study.json`. The order is locked once a session starts.
+
+```text
+study-results/P007/
+  participant-study.json
+  questionnaire-long.csv
+  participant-report.json
+  eeg-comparison-long.csv
+  session-.../
+    manifest.json
+    questionnaire.json
+    questionnaire.csv
+    eeg-epochs.csv
+    ...
+    _COMPLETE.json
+```
+
+Questionnaire answers are used only for persistence, reporting, and interview support. They are not passed to EEG interpretation, planning, or adaptive audio.
+
+Individual session summaries and the participant report show Theta, Beta, and real-time log-TBR with the persisted calibration log-TBR baseline overlaid on the same track. The sound-exposure lanes and adaptive D1/D2 markers use the same fixed 0–10 minute axis. The participant report loads each session's saved recording and applies shared participant-level Y ranges across the two conditions; invalid EEG windows appear as gaps.
+
 Module 01/02 Phase 1 development and test instructions: [docs/MODULE_01_02_PHASE1.md](docs/MODULE_01_02_PHASE1.md).
 
 Audio-library items intentionally deferred for later asset curation are tracked in [docs/TBD_AUDIO_LIBRARY_GAPS.md](docs/TBD_AUDIO_LIBRARY_GAPS.md).

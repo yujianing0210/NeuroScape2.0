@@ -234,10 +234,35 @@
     color: #111 !important;
   }
 }
-.eeg-plot svg { width: 100%; height: auto; min-height: 180px; }
-.eeg-plot h3 { margin: .5rem 0; }
-.eeg-plot-legend { color: var(--muted); font-size: .75rem; }
-.home-comparison { width: min(1100px, 94vw); margin: 1.5rem auto; }
-.eeg-source-panel { width: min(760px, 94vw); margin: 1rem auto; display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
-.eeg-source-panel h2 { width: 100%; }
-.eeg-source-panel small { width: 100%; color: var(--muted); }
+.eeg-plot svg {
+  width: 100%;
+  height: auto;
+  min-height: 180px;
+}
+.eeg-plot h3 {
+  margin: 0.5rem 0;
+}
+.eeg-plot-legend {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.home-comparison {
+  width: min(1100px, 94vw);
+  margin: 1.5rem auto;
+}
+.eeg-source-panel {
+  width: min(760px, 94vw);
+  margin: 0 auto;
+  padding: clamp(1.4rem, 3vw, 2rem);
+  display: flex;
+  gap: 1rem 1.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.eeg-source-panel h2 {
+  width: 100%;
+}
+.eeg-source-panel small {
+  width: 100%;
+  color: var(--muted);
+}

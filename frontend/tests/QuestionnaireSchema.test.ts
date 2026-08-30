@@ -1,0 +1,88 @@
+import { describe, expect, it } from 'vitest';
+import {
+  QUESTIONNAIRE_VERSION,
+  validateSubmission,
+  type QuestionnaireSubmission,
+} from '../src/questionnaire/questionnaireSchema.js';
+import {
+  createParticipantRecord,
+  withStudyOrder,
+} from '../src/questionnaire/questionnairePersistence.js';
+
+const submission = (
+  overrides: Partial<QuestionnaireSubmission> = {},
+): QuestionnaireSubmission => ({
+  questionnaireVersion: QUESTIONNAIRE_VERSION,
+  participantId: 'P001',
+  stage: 'session_pre',
+  sessionId: 'session-1',
+  condition: 'adaptive',
+  sessionNumber: 1,
+  shownAtIso: '2026-01-01T00:00:00.000Z',
+  submittedAtIso: '2026-01-01T00:01:00.000Z',
+  answers: [{ questionId: 'M1', value: 4 }],
+  ...overrides,
+});
+describe('study order persistence model', () => {
+  it('records a manual override and maps its condition order', () => {
+    expect(withStudyOrder(createParticipantRecord('P003'), 'BA')).toMatchObject(
+      {
+        recommendedOrder: 'AB',
+        actualOrder: 'BA',
+        assignmentSource: 'manual_override',
+        conditionOrder: ['adaptive', 'non-adaptive'],
+      },
+    );
+  });
+  it('does not alter order after a session has started', () => {
+    const record = createParticipantRecord('P003');
+    record.sessions.push({
+      sessionNumber: 1,
+      sessionId: 's1',
+      condition: 'non-adaptive',
+      sessionDataFinalized: true,
+    });
+    expect(withStudyOrder(record, 'BA')).toBe(record);
+  });
+});
+describe('questionnaire schema', () => {
+  it('accepts a valid versioned Likert response', () =>
+    expect(validateSubmission(submission())).toEqual([]));
+  it('rejects missing and out-of-range Likert values', () => {
+    expect(validateSubmission(submission({ answers: [] }))).toContain(
+      'M1 must be rated 1–7.',
+    );
+    expect(
+      validateSubmission(
+        submission({ answers: [{ questionId: 'M1', value: 8 }] }),
+      ),
+    ).toContain('M1 must be rated 1–7.');
+  });
+  it('requires comfort text only after a yes response', () => {
+    const post = submission({
+      stage: 'session_post',
+      answers: ['M1', 'Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6']
+        .map((questionId) => ({ questionId: questionId as 'M1', value: 4 }))
+        .concat([{ questionId: 'COMFORT', value: true }]),
+    });
+    expect(validateSubmission(post)).toContain(
+      'Comfort description is required.',
+    );
+  });
+  it('restricts final preference choices', () => {
+    const final = submission({
+      stage: 'final_comparison',
+      sessionId: null,
+      condition: null,
+      sessionNumber: null,
+      answers: [
+        { questionId: 'F1', value: 4 },
+        { questionId: 'F2', value: 5 },
+        { questionId: 'F3', value: 'Adaptive' },
+      ],
+    });
+    expect(validateSubmission(final)).toContain(
+      'A valid preference is required.',
+    );
+  });
+});

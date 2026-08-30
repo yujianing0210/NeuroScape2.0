@@ -241,6 +241,20 @@ export function createStudyArtifactBundle(
 export async function saveBundleToBackend(
   bundle: StudyArtifactBundle,
 ): Promise<string> {
+  await uploadBundleToBackend(bundle);
+  const prefix = `/api/study/sessions/${encodeURIComponent(bundle.participantId)}/${encodeURIComponent(bundle.sessionId)}`;
+  const finalized = await fetch(`${prefix}/finalize`, { method: 'POST' });
+  if (!finalized.ok)
+    throw new Error(
+      `Failed to finalize local study folder: HTTP ${finalized.status}`,
+    );
+  const result = (await finalized.json()) as { directory?: string };
+  return result.directory ?? bundle.folderName;
+}
+
+export async function uploadBundleToBackend(
+  bundle: StudyArtifactBundle,
+): Promise<void> {
   const prefix = `/api/study/sessions/${encodeURIComponent(bundle.participantId)}/${encodeURIComponent(bundle.sessionId)}`;
   const health = await fetch('/api/study/health');
   if (!health.ok) throw new Error('Local study recorder is unavailable.');
@@ -258,13 +272,6 @@ export async function saveBundleToBackend(
         `Failed to save ${file.filename}: HTTP ${response.status}`,
       );
   }
-  const finalized = await fetch(`${prefix}/finalize`, { method: 'POST' });
-  if (!finalized.ok)
-    throw new Error(
-      `Failed to finalize local study folder: HTTP ${finalized.status}`,
-    );
-  const result = (await finalized.json()) as { directory?: string };
-  return result.directory ?? bundle.folderName;
 }
 
 export async function downloadStudyZip(

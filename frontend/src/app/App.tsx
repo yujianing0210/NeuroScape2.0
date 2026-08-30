@@ -25,7 +25,7 @@ import { adaptiveIntegrationHarness } from '../integration/AdaptiveIntegrationHa
 import { audioEngine } from '../audio/AudioEngine.js';
 import {
   createStudyArtifactBundle,
-  saveBundleToBackend,
+  uploadBundleToBackend,
 } from '../study/StudyArtifacts.js';
 import { studyArtifactStore } from '../study/studyArtifactStore.js';
 import { liveSessionId } from '../network/liveRuntime.js';
@@ -41,15 +41,54 @@ import {
   assignSharedBasePlan,
   BASE_PLAN_VERSION,
 } from '@neuroscape/adaptive-planner';
+import { QuestionnairePage } from '../questionnaire/QuestionnairePage.js';
+import {
+  createParticipantRecord,
+  finalizeSession,
+  loadParticipantRecord,
+  saveParticipantRecord,
+  uploadQuestionnaireArtifact,
+} from '../questionnaire/questionnairePersistence.js';
+import type {
+  ParticipantStudyRecord,
+  QuestionnaireStage,
+  QuestionnaireSubmission,
+  StudyCondition,
+} from '../questionnaire/questionnaireSchema.js';
+import { ParticipantComparisonPage } from '../ui/pages/ParticipantComparisonPage.js';
 
 type Page =
-  'home' | 'calibration' | 'loading' | 'preview' | 'session' | 'summary';
+  | 'home'
+  | 'calibration'
+  | 'questionnaire'
+  | 'artifact-error'
+  | 'handoff'
+  | 'dashboard'
+  | 'loading'
+  | 'preview'
+  | 'session'
+  | 'summary';
 export function App() {
   const finalizing = useRef(false);
   const audioCaptureError = useRef<string | null>(null);
   const rawEegSource = useRef<RawEegRecordingSource | null>(null);
   const returnHomeAfterFinalize = useRef(false);
   const [page, setPage] = useState<Page>('home');
+  const [studyRecord, setStudyRecord] = useState<ParticipantStudyRecord | null>(
+    null,
+  );
+  const [questionnaireStage, setQuestionnaireStage] =
+    useState<QuestionnaireStage>('calibration_post');
+  const [artifactError, setArtifactError] = useState('');
+  const pendingStart = useRef<null | (() => Promise<void>)>(null);
+  const calibrationProfile = useRef<Profile | null>(null);
+  const currentStudySession = useRef<null | {
+    participantId: string;
+    sessionId: string;
+    sessionNumber: 1 | 2;
+    condition: StudyCondition;
+    actualOrder: 'AB' | 'BA';
+  }>(null);
   const [calibrationIntent, setCalibrationIntent] =
     useState<CalibrationSessionIntent>({
       participantId: 'P001',
@@ -142,16 +181,24 @@ export function App() {
             rawEeg,
           );
           studyArtifactStore.setBundle(bundle);
-          setPage(returnHomeAfterFinalize.current ? 'home' : 'summary');
           studyArtifactStore.setBackend({ status: 'saving' });
           try {
-            const directory = await saveBundleToBackend(bundle);
-            studyArtifactStore.setBackend({ status: 'saved', directory });
+            await uploadBundleToBackend(bundle);
+            studyArtifactStore.setBackend({
+              status: 'saved',
+              directory: bundle.folderName,
+            });
+            setQuestionnaireStage('session_post');
+            setPage('questionnaire');
           } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
             studyArtifactStore.setBackend({
               status: 'failed',
-              error: error instanceof Error ? error.message : String(error),
+              error: message,
             });
+            setArtifactError(message);
+            setPage('artifact-error');
           }
         } else setPage(returnHomeAfterFinalize.current ? 'home' : 'summary');
         returnHomeAfterFinalize.current = false;
@@ -237,8 +284,14 @@ export function App() {
   const startCalibratedAdaptive = async (
     profile: Profile,
     replayFile?: File,
+    prescribedSessionId?: string,
   ) => {
-    const assignment = assignSharedBasePlan(profile.participant_id);
+    const assignment = assignSharedBasePlan(
+      profile.participant_id,
+      currentStudySession.current
+        ? currentStudySession.current.actualOrder === 'BA'
+        : undefined,
+    );
     try {
       const response = await fetch('/api/llm/health');
       const health = (await response.json()) as { configured?: boolean };
@@ -257,7 +310,9 @@ export function App() {
       setRealTimeRestartEnabled(true);
       studyArtifactStore.reset();
       audioCaptureError.current = null;
-      const sessionId = `session-${new Date().toISOString().replaceAll(/\D/g, '')}-${crypto.randomUUID().slice(0, 8)}`;
+      const sessionId =
+        prescribedSessionId ??
+        `session-${new Date().toISOString().replaceAll(/\D/g, '')}-${crypto.randomUUID().slice(0, 8)}`;
       recordingStore.start({
         sessionId,
         participantId: profile.participant_id,
@@ -323,9 +378,18 @@ export function App() {
   void startAdaptive;
   void startLongDemo;
   void startSpatialDiagnostic;
-  const startNonAdaptive = async (profile: Profile, replayFile?: File) => {
+  const startNonAdaptive = async (
+    profile: Profile,
+    replayFile?: File,
+    prescribedSessionId?: string,
+  ) => {
     const participantId = profile.participant_id;
-    const assignment = assignSharedBasePlan(participantId);
+    const assignment = assignSharedBasePlan(
+      participantId,
+      currentStudySession.current
+        ? currentStudySession.current.actualOrder === 'BA'
+        : undefined,
+    );
     try {
       const epochSource = replayFile
         ? new ReplayEegEpochSource(replayFile)
@@ -338,7 +402,9 @@ export function App() {
       setRealTimeRestartEnabled(false);
       studyArtifactStore.reset();
       audioCaptureError.current = null;
-      const sessionId = `session-${new Date().toISOString().replaceAll(/\D/g, '')}-${crypto.randomUUID().slice(0, 8)}`;
+      const sessionId =
+        prescribedSessionId ??
+        `session-${new Date().toISOString().replaceAll(/\D/g, '')}-${crypto.randomUUID().slice(0, 8)}`;
       recordingStore.start({
         sessionId,
         participantId,
@@ -373,11 +439,134 @@ export function App() {
     setPage('session');
     void startAdaptiveAudio();
   };
+  const beginStudySession = async (
+    profile: Profile,
+    replayFile: File | undefined,
+    condition: StudyCondition,
+  ) => {
+    const participantId = profile.participant_id;
+    const record = await loadParticipantRecord(participantId);
+    const sessionNumber = (record.conditionOrder.indexOf(condition) + 1) as
+      1 | 2;
+    const existing = record.sessions.find(
+      (item) =>
+        item.sessionNumber === sessionNumber &&
+        item.attemptStatus !== 'failed' &&
+        item.attemptStatus !== 'excluded',
+    );
+    if (existing?.sessionDataFinalized)
+      throw new Error(`Session ${sessionNumber} is already complete.`);
+    const sessionId =
+      existing?.sessionId ??
+      `session-${new Date().toISOString().replaceAll(/\D/g, '')}-${crypto.randomUUID().slice(0, 8)}`;
+    currentStudySession.current = {
+      participantId,
+      sessionId,
+      sessionNumber,
+      condition,
+      actualOrder: record.actualOrder,
+    };
+    setStudyRecord(record);
+    pendingStart.current = () =>
+      condition === 'adaptive'
+        ? startCalibratedAdaptive(profile, replayFile, sessionId)
+        : startNonAdaptive(profile, replayFile, sessionId);
+    setQuestionnaireStage('session_pre');
+    setPage('questionnaire');
+  };
+  const submitQuestionnaire = async (submission: QuestionnaireSubmission) => {
+    const base =
+      studyRecord ?? createParticipantRecord(submission.participantId);
+    if (submission.stage === 'calibration_post') {
+      const next = await saveParticipantRecord({
+        ...base,
+        calibrationSessionId: calibrationProfile.current?.session_id,
+        calibrationCompleted: true,
+        calibrationQuestionnaire: submission,
+      });
+      setStudyRecord(next);
+      setPage('home');
+      return;
+    }
+    if (submission.stage === 'session_pre') {
+      const context = currentStudySession.current!;
+      const sessions = base.sessions.filter(
+        (item) => item.sessionId !== context.sessionId,
+      );
+      sessions.push({
+        sessionNumber: context.sessionNumber,
+        sessionId: context.sessionId,
+        condition: context.condition,
+        pre: submission,
+        sessionDataFinalized: false,
+        attemptStatus: 'accepted',
+      });
+      const next = await saveParticipantRecord({ ...base, sessions });
+      setStudyRecord(next);
+      await pendingStart.current?.();
+      pendingStart.current = null;
+      return;
+    }
+    if (submission.stage === 'session_post') {
+      const context = currentStudySession.current!;
+      const existing = base.sessions.find(
+        (item) => item.sessionId === context.sessionId,
+      );
+      await uploadQuestionnaireArtifact(submission, existing?.pre);
+      const sessions = base.sessions.map((item) =>
+        item.sessionId === context.sessionId
+          ? { ...item, post: submission }
+          : item,
+      );
+      let next = await saveParticipantRecord({ ...base, sessions });
+      const directory = await finalizeSession(
+        context.participantId,
+        context.sessionId,
+      );
+      next = await saveParticipantRecord({
+        ...next,
+        sessions: next.sessions.map((item) =>
+          item.sessionId === context.sessionId
+            ? { ...item, sessionDataFinalized: true }
+            : item,
+        ),
+      });
+      studyArtifactStore.setBackend({ status: 'saved', directory });
+      setStudyRecord(next);
+      const completed = next.sessions.filter(
+        (item) =>
+          item.post &&
+          item.sessionDataFinalized &&
+          item.attemptStatus === 'accepted',
+      );
+      if (
+        completed.some((item) => item.condition === 'adaptive') &&
+        completed.some((item) => item.condition === 'non-adaptive')
+      ) {
+        setQuestionnaireStage('final_comparison');
+        setPage('questionnaire');
+      } else setPage('home');
+      return;
+    }
+    const next = await saveParticipantRecord({
+      ...base,
+      finalComparison: submission,
+    });
+    setStudyRecord(next);
+    setPage('handoff');
+  };
   if (page === 'home')
     return (
       <HomePage
-        onRealTime={startCalibratedAdaptive}
-        onNonAdaptive={startNonAdaptive}
+        studyRecord={studyRecord}
+        onParticipantRecord={setStudyRecord}
+        onDashboard={() => setPage('dashboard')}
+        onRealTime={(profile, replayFile) =>
+          beginStudySession(profile, replayFile, 'adaptive')
+        }
+        onNonAdaptive={(profile, replayFile) =>
+          beginStudySession(profile, replayFile, 'non-adaptive')
+        }
         onCalibration={(intent) => {
           setCalibrationIntent(intent);
           setPage('calibration');
@@ -388,7 +577,97 @@ export function App() {
     return (
       <CalibrationPage
         initialParticipantId={calibrationIntent.participantId}
-        onContinue={async () => setPage('home')}
+        onContinue={async (profile) => {
+          calibrationProfile.current = profile;
+          const record = await loadParticipantRecord(profile.participant_id);
+          setStudyRecord(record);
+          setQuestionnaireStage('calibration_post');
+          setPage('questionnaire');
+        }}
+        onHome={() => setPage('home')}
+      />
+    );
+  if (page === 'questionnaire') {
+    const context = currentStudySession.current;
+    const participantId =
+      questionnaireStage === 'calibration_post'
+        ? (calibrationProfile.current?.participant_id ??
+          calibrationIntent.participantId)
+        : (studyRecord?.participantId ??
+          context?.participantId ??
+          calibrationIntent.participantId);
+    const sessionStage =
+      questionnaireStage === 'session_pre' ||
+      questionnaireStage === 'session_post';
+    return (
+      <QuestionnairePage
+        stage={questionnaireStage}
+        participantId={participantId}
+        sessionId={sessionStage ? context?.sessionId : undefined}
+        sessionNumber={sessionStage ? context?.sessionNumber : undefined}
+        condition={sessionStage ? context?.condition : undefined}
+        onSubmit={submitQuestionnaire}
+      />
+    );
+  }
+  if (page === 'artifact-error')
+    return (
+      <main className="flow-page">
+        <section className="glass-panel">
+          <h1>Session data needs attention</h1>
+          <p>
+            The meditation has ended safely, but its recording could not be
+            saved. Do not restart the meditation. Ask the researcher to retry.
+          </p>
+          {artifactError && (
+            <p role="alert" className="summary-error">
+              {artifactError}
+            </p>
+          )}
+          <button
+            onClick={() =>
+              void (async () => {
+                const bundle = studyArtifactStore.getState().bundle;
+                if (!bundle) return;
+                setArtifactError('');
+                try {
+                  await uploadBundleToBackend(bundle);
+                  studyArtifactStore.setBackend({
+                    status: 'saved',
+                    directory: bundle.folderName,
+                  });
+                  setQuestionnaireStage('session_post');
+                  setPage('questionnaire');
+                } catch (error) {
+                  setArtifactError(
+                    error instanceof Error ? error.message : String(error),
+                  );
+                }
+              })()
+            }
+          >
+            Retry saving session data
+          </button>
+        </section>
+      </main>
+    );
+  if (page === 'handoff')
+    return (
+      <main className="flow-page">
+        <section className="glass-panel">
+          <p className="flow-brand">NeuroScape</p>
+          <h1>Questionnaires complete</h1>
+          <p>Please return the device to the researcher.</p>
+          <button onClick={() => setPage('dashboard')}>
+            Researcher: Open Participant Dashboard
+          </button>
+        </section>
+      </main>
+    );
+  if (page === 'dashboard' && studyRecord)
+    return (
+      <ParticipantComparisonPage
+        record={studyRecord}
         onHome={() => setPage('home')}
       />
     );

@@ -503,7 +503,7 @@ export function CalibrationPage({
           disabled={!profile.ready_to_continue || !profile.baseline_available}
           onClick={() => void onContinue(profile)}
         >
-          Continue to Adaptive Session
+          Continue to Participant Reflection
         </button>
       </section>
     );
@@ -515,7 +515,10 @@ export function CalibrationPage({
     );
 
   return (
-    <Shell status={status} onHome={onHome}>
+    <Shell
+      status={status}
+      onHome={status.state === 'COMPLETE' ? undefined : onHome}
+    >
       <audio
         ref={audioRef}
         src={GUIDANCE_URL}

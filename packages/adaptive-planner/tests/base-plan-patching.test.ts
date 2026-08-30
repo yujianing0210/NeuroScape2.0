@@ -4,6 +4,7 @@ import {
   createForestBasePlan,
   measureBasePlan,
   materializeBasePlan,
+  recommendedStudyOrder,
   normalizeLegacyPlanPatch,
   phase1Config,
   validateAndProjectPatch,
@@ -51,6 +52,14 @@ describe('shared Base Plan and future patching', () => {
     const assignment = assignSharedBasePlan('P002');
     expect(assignment.basePlanId).toBe('forest_base');
     expect(assignment.assignmentRuleVersion).toBe('shared_base_v1');
+  });
+  it.each([
+    ['P001', 'AB'],
+    ['P003', 'AB'],
+    ['P004', 'BA'],
+    ['P010', 'BA'],
+  ])('derives %s as %s from integer parity', (participantId, expected) => {
+    expect(recommendedStudyOrder(participantId)).toBe(expected);
   });
   it('hydrates canonical playback for every materialized Base Plan sound', () => {
     const materialized = materializeBasePlan(a);

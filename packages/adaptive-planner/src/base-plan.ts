@@ -224,16 +224,30 @@ export function validateBasePlan(plan: BaseScenePlan): string[] {
 
 export function assignSharedBasePlan(
   participantId: string,
-  adaptiveFirst = false,
+  adaptiveFirst?: boolean,
 ): BasePlanAssignment {
+  const participantNumber = Number.parseInt(
+    participantId.replace(/^P0*/i, ''),
+    10,
+  );
+  const resolvedAdaptiveFirst =
+    adaptiveFirst ??
+    (Number.isInteger(participantNumber) && participantNumber % 2 === 0);
   return {
     participantId,
-    conditionOrder: adaptiveFirst
+    conditionOrder: resolvedAdaptiveFirst
       ? ['adaptive', 'non_adaptive']
       : ['non_adaptive', 'adaptive'],
     basePlanId: 'forest_base',
     assignmentRuleVersion: ASSIGNMENT_RULE_VERSION,
   };
+}
+
+export type StudyOrder = 'AB' | 'BA';
+export function recommendedStudyOrder(participantId: string): StudyOrder {
+  return assignSharedBasePlan(participantId).conditionOrder[0] === 'adaptive'
+    ? 'BA'
+    : 'AB';
 }
 
 export function materializeBasePlan(plan: BaseScenePlan): SceneJourneyPlan {

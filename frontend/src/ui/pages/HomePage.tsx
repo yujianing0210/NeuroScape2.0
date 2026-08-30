@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   api,
   type SavedCalibrationSession,
@@ -6,6 +6,12 @@ import {
 import type { Profile } from '../../calibration/types.js';
 import { recordingStore } from '../../recording/recordingStore.js';
 import { EegTimelinePlot } from '../components/EegTimelinePlot.js';
+import {
+  loadParticipantRecord,
+  saveParticipantRecord,
+  withStudyOrder,
+} from '../../questionnaire/questionnairePersistence.js';
+import type { ParticipantStudyRecord } from '../../questionnaire/questionnaireSchema.js';
 
 export interface CalibrationSessionIntent {
   participantId: string;
@@ -27,10 +33,16 @@ export function HomePage({
   onCalibration,
   onRealTime,
   onNonAdaptive,
+  studyRecord,
+  onParticipantRecord,
+  onDashboard,
 }: {
   onCalibration: (intent: CalibrationSessionIntent) => void;
   onRealTime: (profile: Profile, replayFile?: File) => void | Promise<void>;
   onNonAdaptive: (profile: Profile, replayFile?: File) => void | Promise<void>;
+  studyRecord: ParticipantStudyRecord | null;
+  onParticipantRecord: (record: ParticipantStudyRecord | null) => void;
+  onDashboard: () => void;
 }) {
   const [participantId, setParticipantId] = useState('P001');
   const [sessions, setSessions] = useState<SavedCalibrationSession[]>([]);
@@ -45,6 +57,32 @@ export function HomePage({
   const valid = /^P0*[1-9][0-9]*$/.test(normalized);
 
   useEffect(() => {
+    if (!valid) {
+      onParticipantRecord(null);
+      return;
+    }
+    let active = true;
+    const timeout = window.setTimeout(
+      () =>
+        void loadParticipantRecord(normalized)
+          .then((record) => {
+            if (active) onParticipantRecord(record);
+          })
+          .catch((reason) => {
+            if (active)
+              setError(
+                reason instanceof Error ? reason.message : String(reason),
+              );
+          }),
+      250,
+    );
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+    };
+  }, [normalized, valid, onParticipantRecord]);
+
+  useEffect(() => {
     void api
       .sessions()
       .then((items) => {
@@ -56,6 +94,14 @@ export function HomePage({
         setError(reason instanceof Error ? reason.message : String(reason)),
       );
   }, []);
+  const participantSessions = useMemo(
+    () => sessions.filter((item) => item.participant_id === normalized),
+    [sessions, normalized],
+  );
+  useEffect(() => {
+    if (!participantSessions.some((item) => item.session_id === selected))
+      setSelected(participantSessions[0]?.session_id ?? '');
+  }, [normalized, sessions, selected, participantSessions]);
 
   const startRealTime = async () => {
     if (!selected) return;
@@ -68,6 +114,7 @@ export function HomePage({
           details.profile_error ||
             'This session has no compatible calibration profile.',
         );
+      if (!(await confirmCondition('adaptive'))) return;
       await onRealTime(
         details.profile,
         eegSource === 'prerecorded' ? (replayFile ?? undefined) : undefined,
@@ -88,6 +135,7 @@ export function HomePage({
         throw new Error(
           details.profile_error || 'A compatible baseline profile is required.',
         );
+      if (!(await confirmCondition('non-adaptive'))) return;
       await onNonAdaptive(
         details.profile,
         eegSource === 'prerecorded' ? (replayFile ?? undefined) : undefined,
@@ -99,6 +147,53 @@ export function HomePage({
     }
   };
   const completed = recordingStore.completed();
+  const participantRecord =
+    studyRecord?.participantId === normalized ? studyRecord : null;
+  const nextCondition = participantRecord?.conditionOrder.find(
+    (condition, index) =>
+      !participantRecord.sessions.some(
+        (item) =>
+          item.sessionNumber === index + 1 &&
+          item.sessionDataFinalized &&
+          item.attemptStatus === 'accepted',
+      ),
+  );
+  const hasStarted = Boolean(participantRecord?.sessions.length);
+  const confirmCondition = async (condition: 'adaptive' | 'non-adaptive') => {
+    if (!participantRecord || !nextCondition || nextCondition === condition)
+      return true;
+    const proceed = window.confirm(
+      `This participant is assigned to ${participantRecord.actualOrder}. ${condition === 'adaptive' ? 'Adaptive' : 'Non-Adaptive'} is not the next scheduled condition. Continue anyway?`,
+    );
+    if (!proceed) return false;
+    const updated = await saveParticipantRecord({
+      ...participantRecord,
+      orderDeviations: [
+        ...(participantRecord.orderDeviations ?? []),
+        {
+          attemptedCondition: condition,
+          recordedAtIso: new Date().toISOString(),
+          reason: 'operator_confirmation',
+        },
+      ],
+    });
+    onParticipantRecord(updated);
+    return true;
+  };
+  const changeOrder = async (actualOrder: 'AB' | 'BA') => {
+    if (!participantRecord || hasStarted) return;
+    setBusy(true);
+    try {
+      const updated = await saveParticipantRecord(
+        withStudyOrder(participantRecord, actualOrder),
+      );
+      onParticipantRecord(updated);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <main className="flow-page home-page">
@@ -115,10 +210,92 @@ export function HomePage({
       {!valid && (
         <small>Use P followed by a positive integer, for example P001.</small>
       )}
+      {participantRecord && (
+        <section className="glass-panel study-order-panel">
+          <div>
+            <span>Study Order</span>
+            <strong>
+              Recommended for {normalized}: {participantRecord.recommendedOrder}
+            </strong>
+          </div>
+          <select
+            aria-label="Study order"
+            value={participantRecord.actualOrder}
+            disabled={busy || hasStarted}
+            onChange={(event) =>
+              void changeOrder(event.target.value as 'AB' | 'BA')
+            }
+          >
+            <option value="AB">A/B — Non-Adaptive → Adaptive</option>
+            <option value="BA">B/A — Adaptive → Non-Adaptive</option>
+          </select>
+          {participantRecord.assignmentSource === 'manual_override' && (
+            <small>
+              Manual override: this differs from the default assignment for{' '}
+              {normalized}.
+            </small>
+          )}
+          {hasStarted && <small>Order is locked after Session 1 starts.</small>}
+          <p>
+            <span>Next required condition</span>
+            <strong>
+              {nextCondition
+                ? nextCondition === 'adaptive'
+                  ? 'Adaptive'
+                  : 'Non-Adaptive'
+                : participantRecord.finalComparison
+                  ? 'Participant Report'
+                  : 'Final Comparison'}
+            </strong>
+          </p>
+        </section>
+      )}
       {error && (
         <p role="alert" className="summary-error">
           {error}
         </p>
+      )}
+      {studyRecord?.participantId === normalized && (
+        <section className="glass-panel study-progress">
+          <h2>Study Progress</h2>
+          <p>
+            <span>Calibration</span>
+            <strong>
+              {studyRecord.calibrationQuestionnaire
+                ? 'Complete'
+                : 'Not complete'}
+            </strong>
+          </p>
+          {studyRecord.conditionOrder.map((condition, index) => {
+            const session = studyRecord.sessions.find(
+              (item) =>
+                item.sessionNumber === index + 1 &&
+                item.attemptStatus === 'accepted',
+            );
+            return (
+              <p key={condition}>
+                <span>
+                  Session {index + 1} ·{' '}
+                  {condition === 'adaptive' ? 'Adaptive' : 'Non-Adaptive'}
+                </span>
+                <strong>
+                  {session?.sessionDataFinalized
+                    ? 'Complete'
+                    : session?.pre
+                      ? 'In progress'
+                      : 'Not started'}
+                </strong>
+              </p>
+            );
+          })}
+          <p>
+            <span>Final comparison</span>
+            <strong>{studyRecord.finalComparison ? 'Complete' : '—'}</strong>
+          </p>
+          {studyRecord.finalComparison && (
+            <button onClick={onDashboard}>Open Participant Dashboard</button>
+          )}
+        </section>
       )}
       <section className="glass-panel eeg-source-panel">
         <h2>EEG Source</h2>
@@ -180,10 +357,10 @@ export function HomePage({
             value={selected}
             onChange={(event) => setSelected(event.target.value)}
           >
-            {!sessions.length && (
+            {!participantSessions.length && (
               <option value="">No completed profiles found</option>
             )}
-            {sessions.map((item) => (
+            {participantSessions.map((item) => (
               <option key={item.session_id} value={item.session_id}>
                 {item.participant_id} · {item.session_id}
               </option>
@@ -191,7 +368,11 @@ export function HomePage({
           </select>
           <button
             disabled={
-              !selected || busy || (eegSource === 'prerecorded' && !replayFile)
+              !selected ||
+              busy ||
+              (Boolean(participantRecord) &&
+                !participantRecord?.calibrationQuestionnaire) ||
+              (eegSource === 'prerecorded' && !replayFile)
             }
             onClick={() => void startRealTime()}
           >
@@ -210,6 +391,8 @@ export function HomePage({
               !valid ||
               !selected ||
               busy ||
+              (Boolean(participantRecord) &&
+                !participantRecord?.calibrationQuestionnaire) ||
               (eegSource === 'prerecorded' && !replayFile)
             }
             onClick={() => void startNonAdaptive()}

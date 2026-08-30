@@ -205,6 +205,7 @@ export class LiveRawEegRecorder implements RawEegRecordingSource {
 async function fetchRawEegCsv(afterSampleIndex: number): Promise<Blob> {
   const response = await fetch(
     `/api/calibration/live/raw.csv?after_sample_index=${afterSampleIndex}`,
+    { signal: AbortSignal.timeout(15_000) },
   );
   if (!response.ok) {
     const payload = (await response.json().catch(() => ({}))) as {

@@ -44,7 +44,8 @@ export async function loadParticipantRecord(
   const response = await fetch(
     `/api/study/participants/${encodeURIComponent(participantId)}/state`,
   );
-  if (response.status === 404) return createParticipantRecord(participantId);
+  if (response.status === 204 || response.status === 404)
+    return createParticipantRecord(participantId);
   if (!response.ok) throw new Error('Could not load study progress.');
   const saved = (await response.json()) as ParticipantStudyRecord;
   const recommendedOrder =

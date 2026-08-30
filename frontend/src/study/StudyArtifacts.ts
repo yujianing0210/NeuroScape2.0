@@ -25,6 +25,18 @@ export type BackendSaveState = {
 
 const json = (value: unknown) =>
   new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' });
+const SAVE_REQUEST_TIMEOUT_MS = 30_000;
+const saveFetch = (input: RequestInfo | URL, init?: RequestInit) =>
+  fetch(input, {
+    ...init,
+    signal: AbortSignal.timeout(SAVE_REQUEST_TIMEOUT_MS),
+  }).catch((error) => {
+    if (error instanceof DOMException && error.name === 'TimeoutError')
+      throw new Error(
+        'Saving timed out. Check that the local study recorder is running, then retry.',
+      );
+    throw error;
+  });
 const lines = (values: readonly unknown[]) =>
   new Blob(
     [
@@ -243,7 +255,7 @@ export async function saveBundleToBackend(
 ): Promise<string> {
   await uploadBundleToBackend(bundle);
   const prefix = `/api/study/sessions/${encodeURIComponent(bundle.participantId)}/${encodeURIComponent(bundle.sessionId)}`;
-  const finalized = await fetch(`${prefix}/finalize`, { method: 'POST' });
+  const finalized = await saveFetch(`${prefix}/finalize`, { method: 'POST' });
   if (!finalized.ok)
     throw new Error(
       `Failed to finalize local study folder: HTTP ${finalized.status}`,
@@ -256,10 +268,10 @@ export async function uploadBundleToBackend(
   bundle: StudyArtifactBundle,
 ): Promise<void> {
   const prefix = `/api/study/sessions/${encodeURIComponent(bundle.participantId)}/${encodeURIComponent(bundle.sessionId)}`;
-  const health = await fetch('/api/study/health');
+  const health = await saveFetch('/api/study/health');
   if (!health.ok) throw new Error('Local study recorder is unavailable.');
   for (const file of bundle.files) {
-    const response = await fetch(
+    const response = await saveFetch(
       `${prefix}/artifacts/${encodeURIComponent(file.filename)}`,
       {
         method: 'PUT',

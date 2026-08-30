@@ -156,15 +156,38 @@ export class AudioEngine {
     if (!recorder) return null;
     this.#set({ ...this.#state, recordingStatus: 'stopping' });
     if (recorder.state !== 'inactive') {
-      await new Promise<void>((resolve, reject) => {
-        recorder.addEventListener('stop', () => resolve(), { once: true });
-        recorder.addEventListener(
-          'error',
-          () => reject(new Error('Browser master-audio recording failed.')),
-          { once: true },
-        );
-        recorder.stop();
-      });
+      try {
+        await new Promise<void>((resolve, reject) => {
+          let settled = false;
+          const finish = (error?: Error) => {
+            if (settled) return;
+            settled = true;
+            window.clearTimeout(timeout);
+            error ? reject(error) : resolve();
+          };
+          const timeout = window.setTimeout(
+            () =>
+              finish(new Error('Browser master-audio recording timed out.')),
+            5_000,
+          );
+          recorder.addEventListener('stop', () => finish(), { once: true });
+          recorder.addEventListener(
+            'error',
+            () => finish(new Error('Browser master-audio recording failed.')),
+            { once: true },
+          );
+          try {
+            recorder.stop();
+          } catch (error) {
+            finish(error instanceof Error ? error : new Error(String(error)));
+          }
+        });
+      } catch (error) {
+        this.#mediaRecorder = null;
+        this.#captureChunks = [];
+        this.#set({ ...this.#state, recordingStatus: 'error' });
+        throw error;
+      }
     }
     const mimeType =
       recorder.mimeType || this.#captureChunks[0]?.type || 'audio/webm';

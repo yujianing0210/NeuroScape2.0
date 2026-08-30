@@ -159,6 +159,14 @@ export function HomePage({
       ),
   );
   const hasStarted = Boolean(participantRecord?.sessions.length);
+  const completedCondition = (condition: 'adaptive' | 'non-adaptive') =>
+    participantRecord?.sessions.some(
+      (item) =>
+        item.condition === condition &&
+        item.sessionDataFinalized &&
+        item.attemptStatus !== 'failed' &&
+        item.attemptStatus !== 'excluded',
+    ) ?? false;
   const confirmCondition = async (condition: 'adaptive' | 'non-adaptive') => {
     if (!participantRecord || !nextCondition || nextCondition === condition)
       return true;
@@ -376,7 +384,11 @@ export function HomePage({
             }
             onClick={() => void startRealTime()}
           >
-            {busy ? 'Starting…' : 'Start Adaptive Meditation'}
+            {busy
+              ? 'Starting…'
+              : completedCondition('adaptive')
+                ? 'Run Adaptive Meditation Again'
+                : 'Start Adaptive Meditation'}
           </button>
         </article>
         <article className="glass-panel">
@@ -397,7 +409,9 @@ export function HomePage({
             }
             onClick={() => void startNonAdaptive()}
           >
-            Start Non-Adaptive Meditation
+            {completedCondition('non-adaptive')
+              ? 'Run Non-Adaptive Meditation Again'
+              : 'Start Non-Adaptive Meditation'}
           </button>
         </article>
       </section>

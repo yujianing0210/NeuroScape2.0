@@ -152,7 +152,7 @@ describe('study recorder server', () => {
     ).toBe(200);
     expect(
       (await fetch(`${base}/api/study/participants/P008/state`)).status,
-    ).toBe(404);
+    ).toBe(204);
   });
 
   it('proxies structured LLM requests without exposing the API key', async () => {

@@ -470,11 +470,15 @@ export function createStudyServer(options = {}) {
           );
           json(response, 200, record);
         } catch (error) {
-          if (error?.code === 'ENOENT')
-            json(response, 404, {
-              ok: false,
-              error: 'Participant record not found.',
+          // A missing record is the normal first-visit state, not a failed
+          // resource load. 204 also keeps the browser console free of noisy
+          // expected 404s while retaining 404 compatibility in older clients.
+          if (error?.code === 'ENOENT') {
+            response.writeHead(204, {
+              'access-control-allow-origin': '*',
             });
+            response.end();
+          }
           else throw error;
         }
         return;

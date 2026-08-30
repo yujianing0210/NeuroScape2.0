@@ -454,11 +454,17 @@ export function App() {
         item.attemptStatus !== 'failed' &&
         item.attemptStatus !== 'excluded',
     );
-    if (existing?.sessionDataFinalized)
-      throw new Error(`Session ${sessionNumber} is already complete.`);
+    if (
+      existing?.sessionDataFinalized &&
+      !window.confirm(
+        `Session ${sessionNumber} is already complete. Run it again using the selected calibration profile? The previous session files will be preserved, and the new run will become the accepted attempt.`,
+      )
+    )
+      return;
     const sessionId =
-      existing?.sessionId ??
-      `session-${new Date().toISOString().replaceAll(/\D/g, '')}-${crypto.randomUUID().slice(0, 8)}`;
+      existing && !existing.sessionDataFinalized
+        ? existing.sessionId
+        : `session-${new Date().toISOString().replaceAll(/\D/g, '')}-${crypto.randomUUID().slice(0, 8)}`;
     currentStudySession.current = {
       participantId,
       sessionId,
@@ -490,9 +496,15 @@ export function App() {
     }
     if (submission.stage === 'session_pre') {
       const context = currentStudySession.current!;
-      const sessions = base.sessions.filter(
-        (item) => item.sessionId !== context.sessionId,
-      );
+      const sessions = base.sessions
+        .filter((item) => item.sessionId !== context.sessionId)
+        .map((item) =>
+          item.sessionNumber === context.sessionNumber &&
+          item.attemptStatus !== 'failed' &&
+          item.attemptStatus !== 'excluded'
+            ? { ...item, attemptStatus: 'excluded' as const }
+            : item,
+        );
       sessions.push({
         sessionNumber: context.sessionNumber,
         sessionId: context.sessionId,
@@ -501,7 +513,11 @@ export function App() {
         sessionDataFinalized: false,
         attemptStatus: 'accepted',
       });
-      const next = await saveParticipantRecord({ ...base, sessions });
+      const next = await saveParticipantRecord({
+        ...base,
+        sessions,
+        finalComparison: undefined,
+      });
       setStudyRecord(next);
       await pendingStart.current?.();
       pendingStart.current = null;

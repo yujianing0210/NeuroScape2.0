@@ -6,6 +6,8 @@ import {
   footstepAssetForTransition,
   phase1Config,
   SCENE_TRAVERSAL_DURATION_MS,
+  TRANSITION_FOOTSTEP_GAIN_PRESET,
+  TRAVERSAL_DURATION_PRESETS_MS,
   validateAndProjectPatch,
 } from '../src/index.js';
 import type {
@@ -69,6 +71,15 @@ describe('semantic Decision 2 materializer', () => {
     const inserted = patch.operations[0]?.insertedElement;
     expect(inserted?.payload.playback).toBeDefined();
     expect(inserted?.gain).toBe(0.255);
+    expect(patch.operations[0]?.transitionMs).toBe(SCENE_TRAVERSAL_DURATION_MS);
+    expect(patch.operations).toContainEqual(
+      expect.objectContaining({
+        operation: 'SUPPRESS',
+        targetElementId: 'base-ambient',
+        transitionMs: SCENE_TRAVERSAL_DURATION_MS,
+        systemGenerated: 'scene_transition_foundation_handoff',
+      }),
+    );
     const locomotion = patch.operations.find(
       (operation) => operation.systemGenerated === 'scene_transition_footsteps',
     );
@@ -78,25 +89,19 @@ describe('semantic Decision 2 materializer', () => {
     expect(locomotion?.insertedElement?.payload).toMatchObject({
       attachment: 'feet',
       activationCondition: 'listener-moving',
+      playback: { mode: 'loop-until-arrival' },
     });
     expect(
-      locomotion!.insertedElement!.endMs -
-        locomotion!.insertedElement!.startMs,
+      locomotion!.insertedElement!.endMs - locomotion!.insertedElement!.startMs,
     ).toBe(SCENE_TRAVERSAL_DURATION_MS);
     expect(
       patch.journeyUpdate!.arrivalTimeMs -
         (200_000 + phase1Config.executionFreezeBufferMs),
     ).toBe(SCENE_TRAVERSAL_DURATION_MS);
 
-    expect(
-      patch.operations
-        .filter((operation) => !operation.systemGenerated)
-        .every(
-          (operation) =>
-            operation.transitionMs ===
-            basePlan.transitionPolicy.defaultDurationMs,
-        ),
-    ).toBe(true);
+    expect(inserted?.startMs).toBe(
+      200_000 + phase1Config.executionFreezeBufferMs,
+    );
     const validation = validateAndProjectPatch({
       basePlan,
       acceptedPatches: [],
@@ -118,6 +123,82 @@ describe('semantic Decision 2 materializer', () => {
     ).toBe('stream_bank');
   });
 
+  it('uses a restrained transition-action gain floor for quiet footsteps', () => {
+    const basePlan = createForestBasePlan(phase1Config);
+    const patch = materializeSemanticDecision2({
+      adaptationId: 'quiet-steps',
+      output: {
+        status: 'CHANGE_PROPOSED',
+        destinationNodeId: 'dense_forest',
+        changes: [
+          {
+            operation: 'INSERT',
+            assetId: 'forest_ambient_bed_02',
+            targetElementId: null,
+            semanticRole: 'foundation',
+            mixIntent: null,
+          },
+        ],
+        selectedAssetIds: ['forest_ambient_bed_02'],
+        reasonCodes: [],
+        rationale: 'test',
+      },
+      decision: decision('scene-transition'),
+      basePlan,
+      nowMs: 200_000,
+      config: phase1Config,
+    });
+    const footsteps = patch.operations.find(
+      (operation) => operation.systemGenerated === 'scene_transition_footsteps',
+    )?.insertedElement;
+    expect(footsteps?.assetId).toBe('forest_grass_footstep_01');
+    expect(footsteps?.gain).toBe(TRANSITION_FOOTSTEP_GAIN_PRESET);
+    expect((footsteps?.payload as { gain: number }).gain).toBe(
+      TRANSITION_FOOTSTEP_GAIN_PRESET,
+    );
+  });
+
+  it('maps normal and slow traversal presets to distinct deterministic durations', () => {
+    const basePlan = createForestBasePlan(phase1Config);
+    const make = (traversalPreset: 'normal' | 'slow') =>
+      materializeSemanticDecision2({
+        adaptationId: `pace-${traversalPreset}`,
+        output: {
+          status: 'CHANGE_PROPOSED',
+          destinationNodeId: 'stream_bank',
+          traversalPreset,
+          changes: [
+            {
+              operation: 'INSERT',
+              assetId: 'stream_lakeside_river',
+              targetElementId: null,
+              semanticRole: 'foundation',
+              mixIntent: null,
+            },
+          ],
+          selectedAssetIds: ['stream_lakeside_river'],
+          reasonCodes: [],
+          rationale: 'test',
+        },
+        decision: decision('scene-transition'),
+        basePlan,
+        nowMs: 200_000,
+        config: phase1Config,
+      });
+    const normal = make('normal');
+    const slow = make('slow');
+    const start = 200_000 + phase1Config.executionFreezeBufferMs;
+    expect(normal.journeyUpdate!.arrivalTimeMs - start).toBe(
+      TRAVERSAL_DURATION_PRESETS_MS.normal,
+    );
+    expect(slow.journeyUpdate!.arrivalTimeMs - start).toBe(
+      TRAVERSAL_DURATION_PRESETS_MS.slow,
+    );
+    expect(slow.journeyUpdate!.arrivalTimeMs).toBeGreaterThan(
+      normal.journeyUpdate!.arrivalTimeMs,
+    );
+  });
+
   it('selects authored footsteps for forest, city, water, and beach surfaces', () => {
     expect(footstepAssetForTransition('forest_clearing', 'dense_forest')).toBe(
       'forest_grass_footstep_01',
@@ -130,6 +211,157 @@ describe('semantic Decision 2 materializer', () => {
     );
     expect(footstepAssetForTransition('stream_bank', 'lakeside_river')).toBe(
       'forest_body_slow_creek_steps_01',
+    );
+  });
+
+  it('hands the same active foundation from one committed destination to the next', () => {
+    const basePlan = createForestBasePlan(phase1Config);
+    const transition = (
+      adaptationId: string,
+      destinationNodeId: string,
+      assetId: string,
+      committedBasePlan = basePlan,
+      nowMs = 200_000,
+    ) =>
+      materializeSemanticDecision2({
+        adaptationId,
+        output: {
+          status: 'CHANGE_PROPOSED',
+          destinationNodeId,
+          changes: [
+            {
+              operation: 'INSERT',
+              assetId,
+              targetElementId: null,
+              semanticRole: 'foundation',
+              mixIntent: 'default',
+            },
+          ],
+          selectedAssetIds: [assetId],
+          reasonCodes: [],
+          rationale: 'test handoff',
+        },
+        decision: decision('scene-transition'),
+        basePlan: committedBasePlan,
+        nowMs,
+        config: phase1Config,
+      });
+    const first = transition('first', 'stream_bank', 'stream_lakeside_river');
+    const firstValidation = validateAndProjectPatch({
+      basePlan,
+      acceptedPatches: [],
+      proposedPatch: first,
+      nowMs: 200_000,
+      config: phase1Config,
+    });
+    expect(firstValidation.valid).toBe(true);
+    const committedStream = firstValidation.projectedPlan!;
+    const second = transition(
+      'second',
+      'lakeside_river',
+      'stream_lakeside_river',
+      committedStream,
+      350_000,
+    );
+    expect(second.journeyUpdate).toMatchObject({
+      fromNodeId: 'stream_bank',
+      toNodeId: 'lakeside_river',
+    });
+    expect(
+      second.operations.filter(
+        (operation) =>
+          operation.operation === 'INSERT' &&
+          operation.insertedElement?.assetId === 'stream_lakeside_river',
+      ),
+    ).toHaveLength(0);
+    expect(second.operations).toContainEqual(
+      expect.objectContaining({
+        operation: 'REPLACE',
+        replacementAssetId: 'stream_lakeside_river',
+        destinationFoundationFor: 'lakeside_river',
+      }),
+    );
+    const secondValidation = validateAndProjectPatch({
+      basePlan: committedStream,
+      acceptedPatches: [first],
+      proposedPatch: second,
+      nowMs: 350_000,
+      config: phase1Config,
+    });
+    expect(secondValidation.valid).toBe(true);
+    expect(
+      secondValidation.projection.projectedAmbientLayers,
+    ).toBeLessThanOrEqual(phase1Config.maxAmbientLayers);
+    expect(
+      secondValidation.projection.projectedConcurrentSources,
+    ).toBeLessThanOrEqual(phase1Config.maxConcurrentSources);
+    expect(
+      secondValidation.projectedPlan?.scheduledElements.filter(
+        (element) => element.assetId === 'stream_lakeside_river',
+      ),
+    ).toHaveLength(1);
+    expect(
+      secondValidation.projectedPlan?.scheduledElements.find(
+        (element) => element.assetId === 'stream_lakeside_river',
+      )?.destinationFoundationFor,
+    ).toBe('lakeside_river');
+  });
+
+  it('replaces the prior committed foundation when the next asset differs', () => {
+    const basePlan = createForestBasePlan(phase1Config);
+    basePlan.journey.waypoints.push({
+      locationId: 'stream_bank',
+      arrivalTimeMs: 200_000,
+    });
+    basePlan.scheduledElements = [
+      {
+        ...basePlan.scheduledElements[0]!,
+        elementId: 'committed-stream-foundation',
+        assetId: 'stream_lakeside_river',
+        destinationFoundationFor: 'stream_bank',
+        payload: {
+          ...basePlan.scheduledElements[0]!.payload,
+          assetId: 'stream_lakeside_river',
+          mode: 'localized',
+          locationId: 'stream_bank',
+        },
+      },
+    ];
+    const patch = materializeSemanticDecision2({
+      adaptationId: 'different-foundation',
+      output: {
+        status: 'CHANGE_PROPOSED',
+        destinationNodeId: 'forest_clearing',
+        changes: [
+          {
+            operation: 'INSERT',
+            assetId: 'forest_ambient_bed_01',
+            targetElementId: null,
+            semanticRole: 'foundation',
+            mixIntent: 'default',
+          },
+        ],
+        selectedAssetIds: ['forest_ambient_bed_01'],
+        reasonCodes: [],
+        rationale: 'different foundation handoff',
+      },
+      decision: decision('scene-transition'),
+      basePlan,
+      nowMs: 350_000,
+      config: phase1Config,
+    });
+    expect(patch.operations).toContainEqual(
+      expect.objectContaining({
+        operation: 'INSERT',
+        destinationFoundationFor: 'forest_clearing',
+      }),
+    );
+    expect(patch.operations).toContainEqual(
+      expect.objectContaining({
+        operation: 'SUPPRESS',
+        targetElementId: 'committed-stream-foundation',
+        systemGenerated: 'scene_transition_foundation_handoff',
+      }),
     );
   });
 

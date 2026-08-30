@@ -26,7 +26,8 @@ export interface FuturePatchOperation {
   replacementAssetId?: string;
   insertedElement?: BasePlanElement;
   /** Deterministic runtime support, not authored by Decision 2. */
-  systemGenerated?: 'scene_transition_footsteps';
+  systemGenerated?:
+    'scene_transition_footsteps' | 'scene_transition_foundation_handoff';
   destinationFoundationFor?: string;
 }
 export interface AdaptationHypothesis {
@@ -93,8 +94,17 @@ function applyOperation(
   }
   if (index < 0) return;
   const target = elements[index]!;
-  if (operation.destinationFoundationFor)
+  if (operation.destinationFoundationFor) {
     target.destinationFoundationFor = operation.destinationFoundationFor;
+    if (target.layer === 'ambient') {
+      const payload = target.payload as {
+        mode: 'global' | 'localized';
+        locationId?: string;
+      };
+      payload.mode = 'localized';
+      payload.locationId = operation.destinationFoundationFor;
+    }
+  }
   if (operation.operation === 'SUPPRESS') {
     elements.splice(index, 1);
     return;
@@ -198,7 +208,11 @@ export function validateAndProjectPatch(options: {
       violations.push('target_not_adjustable');
     if (op.operation === 'REPLACE' && !target?.replaceable)
       violations.push('target_not_replaceable');
-    if (op.operation === 'SUPPRESS' && !target?.suppressible)
+    if (
+      op.operation === 'SUPPRESS' &&
+      !target?.suppressible &&
+      op.systemGenerated !== 'scene_transition_foundation_handoff'
+    )
       violations.push('target_not_suppressible');
   }
   const projectedPlan = structuredClone(basePlan);

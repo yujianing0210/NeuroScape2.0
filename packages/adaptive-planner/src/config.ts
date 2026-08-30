@@ -71,8 +71,8 @@ export const phase1Config: AdaptivePlannerConfig = Object.freeze({
   assetFamilyCooldownMs: 45_000,
   bodyAnchorCooldownMs: 80_000,
   maxMeaningfulStasisMs: 80_000,
-  progressionPressureMediumMs: 120_000,
-  progressionPressureHighMs: 200_000,
+  progressionPressureMediumMs: 100_000,
+  progressionPressureHighMs: 160_000,
   destinationStabilizationMinMs: 45_000,
   // TBD_PILOT: receding-horizon, latency, and restrained-complexity policy.
   patchHorizonMs: 120_000,

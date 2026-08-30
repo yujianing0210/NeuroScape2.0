@@ -211,6 +211,7 @@ export class EventController {
         assetId: object.assetId,
         worldPosition: [...object.worldPosition],
         velocity: [...object.velocity],
+        motionMode: object.plan.motion?.motionMode,
         gain,
         lifecycle: object.lifecycle,
         active: object.lifecycle === 'active' && gain > EPSILON,
@@ -304,7 +305,8 @@ export class EventController {
   }
 
   private resolveTrajectory(item: EventPlanItem): NumericTrajectoryWaypoint[] {
-    return item.trajectory.map((waypoint) => ({
+    if (item.motion) return motionTrajectory(item);
+    return (item.trajectory ?? []).map((waypoint) => ({
       position: this.locationMapper.resolve(waypoint.locationId),
       timestampMs: waypoint.timestampMs,
     }));
@@ -326,6 +328,44 @@ export class EventController {
       fadeOutMs: SHORT_EVENT_ENVELOPE.fadeOutMs * scale,
     };
   }
+}
+
+function motionTrajectory(item: EventPlanItem): NumericTrajectoryWaypoint[] {
+  const motion = item.motion!;
+  const start = item.activationTimeMs;
+  const end = start + item.durationMs;
+  const midpoint = (start + end) / 2;
+  if (motion.motionMode === 'stationary')
+    return [
+      { position: [...motion.startPosition], timestampMs: start },
+      { position: [...motion.startPosition], timestampMs: end },
+    ];
+  if (motion.motionMode === 'drift')
+    return [
+      { position: [...motion.startPosition], timestampMs: start },
+      { position: [...motion.endPosition], timestampMs: end },
+    ];
+  let control = motion.controlPoint;
+  if (!control && motion.motionMode === 'orbit-arc') {
+    const [sx, sy, sz] = motion.startPosition;
+    const [ex, ey, ez] = motion.endPosition;
+    const direction = motion.arcDirection === 'clockwise' ? -1 : 1;
+    control = [
+      (sx + ex) / 2 + direction * (ez - sz) * 0.35,
+      (sy + ey) / 2,
+      (sz + ez) / 2 + direction * (sx - ex) * 0.35,
+    ];
+  }
+  control ??= [
+    (motion.startPosition[0] + motion.endPosition[0]) / 2,
+    (motion.startPosition[1] + motion.endPosition[1]) / 2,
+    Math.min(motion.startPosition[2], motion.endPosition[2]) * 0.5,
+  ];
+  return [
+    { position: [...motion.startPosition], timestampMs: start },
+    { position: [...control], timestampMs: midpoint },
+    { position: [...motion.endPosition], timestampMs: end },
+  ];
 }
 
 function sampleTrajectory(

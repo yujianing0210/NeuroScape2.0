@@ -365,7 +365,7 @@ export class SourceManager {
       let started: boolean;
       try {
         started =
-          playback.mode === 'repeat'
+          playback.mode === 'repeat' || playback.mode === 'repeat-count'
             ? this.#playback.startBurst(
                 source,
                 result.buffer,
@@ -377,6 +377,7 @@ export class SourceManager {
                 source,
                 result.buffer,
                 playback.mode === 'loop' ||
+                  playback.mode === 'loop-until-arrival' ||
                   playback.durationPolicy === 'loop-until-end',
                 startAt,
               );
@@ -396,7 +397,7 @@ export class SourceManager {
         this.#onChange();
         return;
       }
-      if (started && playback.mode === 'repeat' && playback.perRepeatGain) {
+      if (started && (playback.mode === 'repeat' || playback.mode === 'repeat-count') && playback.perRepeatGain) {
         this.#gains.applyBurstSequence(
           source.gainNode.gain,
           playback.perRepeatGain,

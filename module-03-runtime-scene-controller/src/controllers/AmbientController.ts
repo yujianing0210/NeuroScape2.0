@@ -97,6 +97,7 @@ export class AmbientController {
         if (object.replacement) this.create(object.replacement);
         continue;
       }
+      if (object.pendingRemoval) continue;
       const nextLifecycle = executionLifecycle(object, this.#timestampMs);
       if (nextLifecycle !== object.lifecycle) {
         object.lifecycle = nextLifecycle;

@@ -16,6 +16,26 @@ import { snapshot } from './fixtures.js';
 const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 describe('SourceManager', () => {
+  it('loops a short transition action until its 32-second journey arrival', async () => {
+    const context = new FakeAudioContext();
+    const master = new FakeNode() as unknown as AudioNode;
+    const manager = new SourceManager(
+      context as unknown as BaseAudioContext,
+      master,
+      new AudioAssetManager([{ assetId: 'action.steps', url: '/steps' }], async () => ({ duration: 4 }) as AudioBuffer, async () => ({ ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(1) })),
+      new GainManager(), new PlaybackScheduler(context as unknown as BaseAudioContext),
+      new HRTFRenderer(context as unknown as BaseAudioContext, master),
+    );
+    const state = snapshot(1_000);
+    state.ambient = []; state.event = [];
+    state.action = [{ ...state.action[0]!, id: 'steps', assetId: 'action.steps', active: true, lifecycle: 'active', plannedStartMs: 1_000, plannedEndMs: 33_000, playback: { mode: 'loop-until-arrival', durationPolicy: 'truncate-at-end' } }];
+    manager.reconcile(state); await flush();
+    expect(context.sources[0]?.loop).toBe(true);
+    state.timestampMs = 33_000;
+    state.action[0] = { ...state.action[0]!, active: false, lifecycle: 'finished', runtimeFinishedMs: 33_000 };
+    manager.reconcile(state);
+    expect(context.sources[0]?.stops).toHaveLength(1);
+  });
   it('raises a canonical event above a dominant ambient audibility floor', async () => {
     const context = new FakeAudioContext();
     const master = new FakeNode() as unknown as AudioNode;

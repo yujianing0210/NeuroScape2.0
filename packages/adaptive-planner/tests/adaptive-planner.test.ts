@@ -90,6 +90,48 @@ describe('adaptive planner Phase 1', () => {
     expect(planningCalls).toBe(0);
   });
 
+  it('raises spatial progression pressure independently of within-scene change pace', async () => {
+    const observed: Array<{
+      timestampMs: number;
+      pressure: string | undefined;
+    }> = [];
+    const planner = new AdaptivePlannerEngine({
+      config: phase1Config,
+      profile: mockCalibrationProfile,
+      initialPlan: initialForestPlan,
+      decisionProvider: {
+        decide: async (context) => {
+          observed.push({
+            timestampMs: context.state.timestampMs,
+            pressure: context.progressionPressure,
+          });
+          return {
+            shouldAdapt: false,
+            goal: 'maintain',
+            scope: 'maintain',
+            rationale: 'observe deterministic progression pacing',
+            provider: 'test',
+          };
+        },
+      },
+      planningProvider: new MockPlanningProvider(),
+    });
+    for (const epoch of createMockTbrReplay().filter(
+      (item) => item.timestampMs <= 220_000,
+    ))
+      await planner.ingest(epoch);
+
+    expect(
+      observed.find((item) => item.timestampMs === 140_000)?.pressure,
+    ).toBe('low');
+    expect(
+      observed.find((item) => item.timestampMs === 160_000)?.pressure,
+    ).toBe('medium');
+    expect(
+      observed.find((item) => item.timestampMs === 220_000)?.pressure,
+    ).toBe('high');
+  });
+
   it('uses checkpoint deadlines when epoch timestamps are not aligned', async () => {
     const planner = engine();
     const template = createMockTbrReplay()[0]!;
@@ -271,6 +313,7 @@ describe('adaptive planner Phase 1', () => {
 
   it('commits a scene destination only after runtime arrival acknowledgement', async () => {
     const basePlan = createForestBasePlan(phase1Config);
+    let planningCalls = 0;
     const planner = new AdaptivePlannerEngine({
       config: phase1Config,
       profile: mockCalibrationProfile,
@@ -298,32 +341,35 @@ describe('adaptive planner Phase 1', () => {
         }),
       },
       planningProvider: {
-        plan: async (_context, _decision, input) => ({
-          patch: { reasoningSummary: 'semantic transition' },
-          semanticOutput: {
-            status: 'CHANGE_PROPOSED',
-            destinationNodeId: 'stream_bank',
-            changes: [
-              {
-                operation: 'INSERT',
-                assetId: 'stream_lakeside_river',
-                targetElementId: null,
-                semanticRole: 'foundation',
-                mixIntent: 'default',
-              },
-            ],
+        plan: async (_context, _decision, input) => {
+          planningCalls += 1;
+          return {
+            patch: { reasoningSummary: 'semantic transition' },
+            semanticOutput: {
+              status: 'CHANGE_PROPOSED',
+              destinationNodeId: 'stream_bank',
+              changes: [
+                {
+                  operation: 'INSERT',
+                  assetId: 'stream_lakeside_river',
+                  targetElementId: null,
+                  semanticRole: 'foundation',
+                  mixIntent: 'default',
+                },
+              ],
+              selectedAssetIds: ['stream_lakeside_river'],
+              reasonCodes: ['DESTINATION_FOUNDATION_SELECTED'],
+              rationale: 'Establish Stream Bank identity.',
+            },
             selectedAssetIds: ['stream_lakeside_river'],
-            reasonCodes: ['DESTINATION_FOUNDATION_SELECTED'],
-            rationale: 'Establish Stream Bank identity.',
-          },
-          selectedAssetIds: ['stream_lakeside_river'],
-          candidateAssetIds: input.retrievedCandidateIds,
-          promptVersion: input.promptVersion,
-          prompt: input.prompt,
-          outputSchema: input.outputSchema,
-          rationale: 'test',
-          provider: 'test',
-        }),
+            candidateAssetIds: input.retrievedCandidateIds,
+            promptVersion: input.promptVersion,
+            prompt: input.prompt,
+            outputSchema: input.outputSchema,
+            rationale: 'test',
+            provider: 'test',
+          };
+        },
       },
     });
     let proposal;
@@ -336,6 +382,19 @@ describe('adaptive planner Phase 1', () => {
     }
     const update = proposal!.futurePatch!.journeyUpdate!;
     expect(proposal!.patchValidation?.valid).toBe(true);
+    const whilePending = await planner.ingest(
+      createMockTbrReplay().find(
+        (epoch) =>
+          epoch.timestampMs >=
+          proposal!.state.timestampMs + phase1Config.checkpointIntervalMs,
+      )!,
+    );
+    expect(whilePending?.decision?.scope).toBe('scene-transition');
+    expect(whilePending?.planning).toBeUndefined();
+    expect(whilePending?.eligibility.reasons).toContain(
+      'scene_transition_pending',
+    );
+    expect(planningCalls).toBe(1);
     planner.acknowledgeApplication(
       proposal!.futurePatch!.adaptationId,
       'PLAN_APPLIED',
@@ -357,6 +416,200 @@ describe('adaptive planner Phase 1', () => {
     expect(planner.currentPlan.userJourney.waypoints.at(-1)?.locationId).toBe(
       'stream_bank',
     );
+  });
+
+  it('materializes and commits two adjacent scene transitions with foundation handoff', async () => {
+    const observedCurrentNodeIds: string[] = [];
+    const observedReachableNodeIds: string[][] = [];
+    const observedDecisionContexts: Array<{
+      timestampMs: number;
+      currentNodeId: string | undefined;
+      lastSpatialProgressionMs: number | undefined;
+      committedSceneTransitionCount: number | undefined;
+      secondsSinceLastSpatialProgression: number | undefined;
+    }> = [];
+    const planner = new AdaptivePlannerEngine({
+      config: phase1Config,
+      profile: mockCalibrationProfile,
+      initialPlan: initialForestPlan,
+      basePlan: createForestBasePlan(phase1Config),
+      decisionProvider: {
+        decide: async (context) => {
+          observedDecisionContexts.push({
+            timestampMs: context.state.timestampMs,
+            currentNodeId:
+              context.currentPlan.userJourney.waypoints.at(-1)?.locationId,
+            lastSpatialProgressionMs: context.lastSpatialProgressionMs,
+            committedSceneTransitionCount:
+              context.committedSceneTransitionCount,
+            secondsSinceLastSpatialProgression:
+              context.secondsSinceLastSpatialProgression,
+          });
+          return context.restrictions.allowSceneTransition
+            ? {
+                decision: 'adapt',
+                intent: 'refresh_engagement',
+                salience: 'low',
+                adaptationBasis: 'progression_driven',
+                evidenceSummary: {
+                  relation: context.state.baselineRelation,
+                  trajectory: context.state.trajectory,
+                  confidence: context.state.measurementConfidence,
+                },
+                reason: 'test sequential transition',
+                maintainReason: null,
+                constraintsForDecision2: [],
+                shouldAdapt: true,
+                goal: 'refresh-engagement',
+                scope: 'scene-transition',
+                rationale: 'test sequential transition',
+                provider: 'test',
+              }
+            : {
+                decision: 'maintain',
+                intent: 'maintain',
+                salience: 'minimal',
+                adaptationBasis: 'none',
+                evidenceSummary: {
+                  relation: context.state.baselineRelation,
+                  trajectory: context.state.trajectory,
+                  confidence: context.state.measurementConfidence,
+                },
+                reason: 'wait for transition cooldown',
+                maintainReason: 'transition cooldown',
+                constraintsForDecision2: [],
+                shouldAdapt: false,
+                goal: 'maintain',
+                scope: 'maintain',
+                rationale: 'wait for transition cooldown',
+                provider: 'test',
+              };
+        },
+      },
+      planningProvider: {
+        plan: async (_context, _decision, input) => {
+          observedCurrentNodeIds.push(input.currentNodeId!);
+          observedReachableNodeIds.push([...(input.reachableNodeIds ?? [])]);
+          const destinationNodeId =
+            input.currentNodeId === 'forest_clearing'
+              ? 'stream_bank'
+              : 'lakeside_river';
+          expect(input.reachableNodeIds).toContain(destinationNodeId);
+          return {
+            patch: { reasoningSummary: 'sequential semantic transition' },
+            semanticOutput: {
+              status: 'CHANGE_PROPOSED',
+              destinationNodeId,
+              changes: [
+                {
+                  operation: 'INSERT',
+                  assetId: 'stream_lakeside_river',
+                  targetElementId: null,
+                  semanticRole: 'foundation',
+                  mixIntent: 'default',
+                },
+              ],
+              selectedAssetIds: ['stream_lakeside_river'],
+              reasonCodes: ['DESTINATION_FOUNDATION_SELECTED'],
+              rationale: 'Reuse the compatible water foundation.',
+            },
+            selectedAssetIds: ['stream_lakeside_river'],
+            candidateAssetIds: input.retrievedCandidateIds,
+            promptVersion: input.promptVersion,
+            prompt: input.prompt,
+            outputSchema: input.outputSchema,
+            rationale: 'test sequential transition',
+            provider: 'test',
+          };
+        },
+      },
+    });
+    const replay = createMockTbrReplay();
+    let first;
+    for (const epoch of replay) {
+      const result = await planner.ingest(epoch);
+      if (result?.futurePatch?.journeyUpdate) {
+        first = result;
+        break;
+      }
+    }
+    expect(first?.patchValidation?.valid).toBe(true);
+    expect(planner.currentPlan.userJourney.waypoints.at(-1)?.locationId).toBe(
+      'forest_clearing',
+    );
+    planner.acknowledgeApplication(
+      first!.futurePatch!.adaptationId,
+      'PLAN_APPLIED',
+      first!.state.timestampMs,
+    );
+    const firstArrival = first!.futurePatch!.journeyUpdate!.arrivalTimeMs;
+    planner.acknowledgeJourneyArrival('stream_bank', firstArrival);
+    expect(planner.currentPlan.userJourney.waypoints.at(-1)?.locationId).toBe(
+      'stream_bank',
+    );
+
+    let second;
+    for (const epoch of replay.filter(
+      (candidate) => candidate.timestampMs > firstArrival,
+    )) {
+      const result = await planner.ingest(epoch);
+      if (result?.futurePatch?.journeyUpdate) {
+        second = result;
+        break;
+      }
+    }
+    expect(observedCurrentNodeIds).toEqual(['forest_clearing', 'stream_bank']);
+    const secondContext = observedDecisionContexts.find(
+      (context) => context.timestampMs === second?.state.timestampMs,
+    );
+    expect(secondContext).toMatchObject({
+      currentNodeId: 'stream_bank',
+      lastSpatialProgressionMs: firstArrival,
+      committedSceneTransitionCount: 1,
+      secondsSinceLastSpatialProgression:
+        (second!.state.timestampMs - firstArrival) / 1_000,
+    });
+    expect(planner.lastSpatialProgressionMs).toBe(firstArrival);
+    expect(observedReachableNodeIds[1]).not.toContain('stream_bank');
+    expect(observedReachableNodeIds[1]).toEqual(
+      expect.arrayContaining(['forest_clearing', 'lakeside_river']),
+    );
+    expect(second?.futurePatch?.journeyUpdate).toMatchObject({
+      fromNodeId: 'stream_bank',
+      toNodeId: 'lakeside_river',
+    });
+    expect(second?.patchValidation?.valid).toBe(true);
+    expect(
+      second?.patchValidation?.projection.projectedAmbientLayers,
+    ).toBeLessThanOrEqual(phase1Config.maxAmbientLayers);
+    expect(
+      second?.patchValidation?.projection.projectedConcurrentSources,
+    ).toBeLessThanOrEqual(phase1Config.maxConcurrentSources);
+    expect(
+      second?.futurePatch?.operations.filter(
+        (operation) =>
+          operation.operation === 'INSERT' &&
+          operation.insertedElement?.assetId === 'stream_lakeside_river',
+      ),
+    ).toHaveLength(0);
+    planner.acknowledgeApplication(
+      second!.futurePatch!.adaptationId,
+      'PLAN_APPLIED',
+      second!.state.timestampMs,
+    );
+    expect(planner.currentPlan.userJourney.waypoints.at(-1)?.locationId).toBe(
+      'stream_bank',
+    );
+    planner.acknowledgeJourneyArrival(
+      'lakeside_river',
+      second!.futurePatch!.journeyUpdate!.arrivalTimeMs,
+    );
+    expect(planner.currentPlan.userJourney.waypoints.at(-1)?.locationId).toBe(
+      'lakeside_river',
+    );
+    expect(
+      planner.history.filter((item) => item.scope === 'scene-transition'),
+    ).toHaveLength(2);
   });
 
   it('rolls back a timed-out scene transition to the origin plan', async () => {
@@ -432,7 +685,8 @@ describe('adaptive planner Phase 1', () => {
     );
     const timeout = planner.expireRuntimeApplications(
       proposal!.futurePatch!.journeyUpdate!.arrivalTimeMs +
-        phase1Config.checkpointIntervalMs + 1,
+        phase1Config.checkpointIntervalMs +
+        1,
     );
     expect(timeout[0]).toMatchObject({ terminalStatus: 'RUNTIME_TIMEOUT' });
     expect(planner.currentPlan.userJourney.waypoints.at(-1)?.locationId).toBe(

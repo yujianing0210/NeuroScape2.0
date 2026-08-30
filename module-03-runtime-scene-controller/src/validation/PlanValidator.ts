@@ -230,12 +230,15 @@ export class PlanValidator {
         errors,
       );
       validatePlaybackPolicy(item.assetId, item.playback, `${path}.playback`, errors);
-      if (!Array.isArray(item.trajectory) || item.trajectory.length === 0) {
-        errors.push(`${path}.trajectory must contain at least one waypoint.`);
+      validateEventMotion(item.motion, `${path}.motion`, errors);
+      if (item.motion === undefined && (!Array.isArray(item.trajectory) || item.trajectory.length === 0)) {
+        errors.push(`${path} requires motion or at least one trajectory waypoint.`);
         return;
       }
+      if (item.motion !== undefined && item.trajectory !== undefined)
+        errors.push(`${path} must not specify both motion and trajectory.`);
       let previousTimestamp = -1;
-      item.trajectory.forEach((waypoint, waypointIndex) => {
+      (Array.isArray(item.trajectory) ? item.trajectory : []).forEach((waypoint, waypointIndex) => {
         const waypointPath = `${path}.trajectory[${waypointIndex}]`;
         if (!isRecord(waypoint))
           return errors.push(`${waypointPath} must be an object.`);
@@ -263,6 +266,23 @@ export class PlanValidator {
       });
     });
   }
+}
+
+function validateEventMotion(value: unknown, path: string, errors: string[]): void {
+  if (value === undefined) return;
+  if (!isRecord(value)) {
+    errors.push(`${path} must be an object.`);
+    return;
+  }
+  const modes = new Set(['stationary', 'drift', 'pass-by', 'orbit-arc', 'approach-recede']);
+  if (typeof value.motionMode !== 'string' || !modes.has(value.motionMode))
+    errors.push(`${path}.motionMode is invalid.`);
+  if (!isVector3(value.startPosition)) errors.push(`${path}.startPosition must be a Vector3.`);
+  if (!isVector3(value.endPosition)) errors.push(`${path}.endPosition must be a Vector3.`);
+  if (value.controlPoint !== undefined && !isVector3(value.controlPoint))
+    errors.push(`${path}.controlPoint must be a Vector3.`);
+  if (value.arcDirection !== undefined && value.arcDirection !== 'clockwise' && value.arcDirection !== 'counterclockwise')
+    errors.push(`${path}.arcDirection is invalid.`);
 }
 
 function validateAction(
@@ -345,7 +365,7 @@ function validatePlaybackPolicy(
     errors.push(`${path} must be an object.`);
     return;
   }
-  if (value.mode !== 'once' && value.mode !== 'loop' && value.mode !== 'repeat')
+  if (!['once', 'loop', 'repeat', 'repeat-count', 'loop-until-arrival'].includes(String(value.mode)))
     errors.push(`${path}.mode is invalid.`);
   if (
     value.durationPolicy !== 'natural' &&
@@ -372,7 +392,7 @@ function validatePlaybackPolicy(
       errors.push(`${path}.perRepeatGain length must equal repeatCount.`);
   }
   if (
-    value.mode === 'repeat' &&
+    (value.mode === 'repeat' || value.mode === 'repeat-count') &&
     (value.repeatCount === undefined ||
       value.repeatGapMs === undefined ||
       value.perRepeatGain === undefined)
@@ -380,7 +400,7 @@ function validatePlaybackPolicy(
     errors.push(
       `${path} repeat mode requires repeatCount, repeatGapMs, and perRepeatGain.`,
     );
-  if (typeof assetId === 'string')
+  if (typeof assetId === 'string' && value.mode !== 'loop-until-arrival')
     validateCanonicalPlaybackPolicy(
       assetId,
       value as unknown as import('@neuroscape/contracts').PlaybackPolicy,

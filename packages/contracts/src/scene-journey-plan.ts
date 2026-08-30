@@ -4,11 +4,26 @@ export type TransitionCurve = 'linear' | 'smoothstep';
 
 /** Semantically meaningful playback choices. DSP and anti-click ramps are excluded. */
 export interface PlaybackPolicy {
-  mode: 'once' | 'loop' | 'repeat';
+  mode: 'once' | 'loop' | 'repeat' | 'repeat-count' | 'loop-until-arrival';
   durationPolicy: 'natural' | 'loop-until-end' | 'truncate-at-end';
   repeatCount?: number;
   repeatGapMs?: number;
   perRepeatGain?: number[];
+}
+
+export type EventMotionMode =
+  | 'stationary'
+  | 'drift'
+  | 'pass-by'
+  | 'orbit-arc'
+  | 'approach-recede';
+
+export interface EventMotion {
+  motionMode: EventMotionMode;
+  startPosition: Vector3;
+  endPosition: Vector3;
+  controlPoint?: Vector3;
+  arcDirection?: 'clockwise' | 'counterclockwise';
 }
 
 export interface DistancePolicy {
@@ -71,7 +86,8 @@ export interface EventPlanItem {
   assetId: string;
   activationTimeMs: number;
   durationMs: number;
-  trajectory: EventTrajectoryWaypoint[];
+  trajectory?: EventTrajectoryWaypoint[];
+  motion?: EventMotion;
   interpolation?: 'linear' | 'smoothstep';
   trajectoryUpdatePolicy?:
     'replace-at-effective-time' | 'continue-from-current-position';

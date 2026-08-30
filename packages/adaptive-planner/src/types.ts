@@ -150,6 +150,8 @@ export interface DecisionContext {
   secondsSinceLastMeaningfulChange: number;
   stasisPressure: boolean;
   secondsSinceLastSpatialProgression?: number;
+  lastSpatialProgressionMs?: number;
+  committedSceneTransitionCount?: number;
   progressionPressure?: ProgressionPressure;
   transitionInProgress: boolean;
   adaptationProgress?: {
@@ -310,6 +312,8 @@ export type Decision2SemanticRole =
 export interface Decision2SemanticOutput {
   status: 'CHANGE_PROPOSED' | 'NO_SAFE_CHANGE';
   destinationNodeId: string | null;
+  /** Semantic request only; deterministic code owns the actual duration. */
+  traversalPreset?: 'normal' | 'slow' | null;
   changes: Array<{
     operation: 'KEEP' | 'ADJUST' | 'REPLACE' | 'SUPPRESS' | 'INSERT';
     assetId: string | null;

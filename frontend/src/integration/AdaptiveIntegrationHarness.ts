@@ -499,7 +499,14 @@ export class AdaptiveIntegrationHarness {
           selectionTrace: result.selectionTrace,
         },
       );
-      this.#runtime.applyPlan(result.plan);
+      this.#runtime.applyPlan(result.plan, {
+        // The planner's committed Base Plan intentionally remains at the
+        // origin until semantic arrival. A concurrent within-scene patch must
+        // therefore not let that origin journey cancel the active transition.
+        preserveActiveJourney:
+          result.futurePatch !== undefined &&
+          result.futurePatch.journeyUpdate === undefined,
+      });
       audioEngine.preloadAssets(result.planning.selectedAssetIds);
       if (result.futurePatch) {
         const terminal = this.#planner?.acknowledgeApplication(

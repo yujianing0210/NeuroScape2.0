@@ -38,6 +38,55 @@ const eventPlan = {
 };
 
 describe('EventController', () => {
+  it('moves an orbit-arc event through a restrained partial arc', () => {
+    const { controller, transitions } = createEvents();
+    controller.initialize([{
+      ...eventPlan,
+      trajectory: undefined,
+      durationMs: 8_000,
+      motion: {
+        motionMode: 'orbit-arc' as const,
+        startPosition: [-7, 1, 3] as [number, number, number],
+        endPosition: [6, 1, 3] as [number, number, number],
+        arcDirection: 'counterclockwise' as const,
+      },
+    }], { defaultDurationMs: 100, curve: 'linear' });
+    controller.update(1_000, listener); transitions.update(1_000);
+    const start = controller.getStates(listener)[0]!.worldPosition;
+    controller.update(4_000, listener); transitions.update(4_000);
+    const middle = controller.getStates(listener)[0]!.worldPosition;
+    expect(middle).not.toEqual(start);
+    expect(middle[2]).not.toBe(3);
+  });
+
+  it('moves a pass-by event from one side of the listener to the other', () => {
+    const { controller, transitions } = createEvents();
+    controller.initialize([{
+      ...eventPlan,
+      trajectory: undefined,
+      durationMs: 8_000,
+      motion: {
+        motionMode: 'pass-by' as const,
+        startPosition: [-7, 1, 3] as [number, number, number],
+        controlPoint: [-3.5, 1, -2] as [number, number, number],
+        endPosition: [6, 1, 3] as [number, number, number],
+      },
+    }], { defaultDurationMs: 100, curve: 'linear' });
+    controller.update(1_000, listener); transitions.update(1_000);
+    expect(controller.getStates(listener)[0]!.worldPosition[0]).toBeLessThan(0);
+    controller.update(6_500, listener); transitions.update(6_500);
+    expect(controller.getStates(listener)[0]!.worldPosition[0]).toBeGreaterThan(0);
+  });
+
+  it('keeps repeated uses of one asset as independent event instances', () => {
+    const { controller } = createEvents();
+    controller.initialize([
+      { ...eventPlan, id: 'bird-1' },
+      { ...eventPlan, id: 'bird-2', activationTimeMs: 6_000, trajectory: eventPlan.trajectory.map((x) => ({ ...x, timestampMs: x.timestampMs + 5_000 })) },
+    ], { defaultDurationMs: 100, curve: 'linear' });
+    expect(controller.getStates(listener).map((item) => item.id)).toEqual(['bird-1', 'bird-2']);
+    expect(new Set(controller.getStates(listener).map((item) => item.assetId))).toEqual(new Set(['event.bird']));
+  });
   it('retains future events as waiting and honors the exact planned end', () => {
     const { controller, transitions } = createEvents();
     controller.initialize([eventPlan], {

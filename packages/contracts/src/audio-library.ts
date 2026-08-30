@@ -146,7 +146,9 @@ export function validateCanonicalPlaybackPolicy(
         ? 'repeat'
         : 'once';
   const errors: string[] = [];
-  if (playback.mode !== expectedMode)
+  const normalizedMode =
+    playback.mode === 'repeat-count' ? 'repeat' : playback.mode;
+  if (normalizedMode !== expectedMode && playback.mode !== 'loop-until-arrival')
     errors.push(`${assetId} playback mode ${playback.mode} is not supported; expected ${expectedMode}.`);
   if (
     playback.mode === 'repeat' &&

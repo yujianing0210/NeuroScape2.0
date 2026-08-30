@@ -139,11 +139,14 @@ describe('OpenAI planner providers', () => {
     expect(input.prompt).toContain('Semantic Spatial Planning');
     expect(input.prompt).not.toContain('selectionWeight');
     const candidate = input.semanticCandidates![0]!;
+    let requestBody: Record<string, unknown> | undefined;
     const provider = new OpenAIPlanningProvider({
-      fetchImpl: async () =>
-        jsonResponse({
+      fetchImpl: async (_input, init) => {
+        requestBody = JSON.parse(String(init?.body));
+        return jsonResponse({
           status: 'CHANGE_PROPOSED',
           destinationNodeId: null,
+          traversalPreset: null,
           changes: [
             {
               operation: 'INSERT',
@@ -156,9 +159,17 @@ describe('OpenAI planner providers', () => {
           reasonCodes: ['MINIMAL_SUFFICIENT_PATCH'],
           selectedAssetIds: [candidate.assetId],
           rationale: 'Selected from the compatible forest event candidates.',
-        }),
+        });
+      },
     });
     const result = await provider.plan(value, decision, input);
+    const submittedOutputSchema = requestBody?.outputSchema as {
+      schema: { properties: Record<string, unknown>; required: string[] };
+    };
+    expect(submittedOutputSchema.schema.required).toContain('traversalPreset');
+    expect(new Set(submittedOutputSchema.schema.required)).toEqual(
+      new Set(Object.keys(submittedOutputSchema.schema.properties)),
+    );
     expect(result.semanticOutput?.changes[0]?.assetId).toBe(candidate.assetId);
     expect(result.patch.reasoningSummary).toContain('Selected from');
     expect(result.outputSchema).toEqual(input.outputSchema);

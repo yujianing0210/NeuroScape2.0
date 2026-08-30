@@ -28,6 +28,11 @@ export interface RuntimeControllerDependencies {
   logger?: RuntimeLogger;
 }
 
+export interface ApplyPlanOptions {
+  /** Merge a non-journey patch without replacing an in-flight journey. */
+  preserveActiveJourney?: boolean;
+}
+
 export class RuntimeController {
   #activePlan: SceneJourneyPlan | undefined;
   #currentState: RuntimeWorldState | undefined;
@@ -114,7 +119,7 @@ export class RuntimeController {
     return this.#currentState;
   }
 
-  applyPlan(plan: SceneJourneyPlan): void {
+  applyPlan(plan: SceneJourneyPlan, options: ApplyPlanOptions = {}): void {
     const validatedPlan = this.requireValidPlan(plan);
     if (!this.#currentState) {
       this.initialize(validatedPlan);
@@ -122,9 +127,18 @@ export class RuntimeController {
     }
 
     const currentListener = this.#journey.getListenerState();
+    const activeTransition = this.#sceneTransitions.state;
+    const preserveActiveJourney =
+      options.preserveActiveJourney === true &&
+      activeTransition !== undefined &&
+      activeTransition.phase !== 'complete';
     const destination = validatedPlan.userJourney.waypoints.at(-1);
 
-    if (
+    if (preserveActiveJourney) {
+      // A within-scene patch is an audio merge, not an implicit cancellation of
+      // the already accepted journey transaction. Keep its future waypoint so
+      // JourneyController can remain the semantic-arrival authority.
+    } else if (
       destination &&
       destination.locationId !== currentListener.semanticLocation &&
       (destination.arrivalTimeMs === undefined ||
@@ -138,8 +152,6 @@ export class RuntimeController {
           this.#timestampMs + validatedPlan.transitionPolicy.defaultDurationMs,
       });
     } else {
-      const activeTransition = this.#sceneTransitions.state;
-
       // A rollback/replacement can restore the origin plan while Runtime still
       // holds transition coordination for the abandoned destination.
       if (
@@ -150,14 +162,20 @@ export class RuntimeController {
         this.#sceneTransitions.rollback('plan-replaced-before-arrival');
     }
 
-    this.#journey.replacePlan(validatedPlan);
+    if (!preserveActiveJourney) this.#journey.replacePlan(validatedPlan);
     const listener = this.#journey.getListenerState();
     this.#ambient.merge(
       validatedPlan.soundscape.ambient,
       this.#sceneTransitions.ambientPolicy(validatedPlan.transitionPolicy),
     );
+    const actionItems = preserveActiveJourney
+      ? preserveJourneyActions(
+          this.#activePlan?.soundscape.action ?? [],
+          validatedPlan.soundscape.action,
+        )
+      : validatedPlan.soundscape.action;
     this.#action.merge(
-      validatedPlan.soundscape.action,
+      actionItems,
       validatedPlan.transitionPolicy,
       listener,
     );
@@ -165,7 +183,13 @@ export class RuntimeController {
       validatedPlan.soundscape.event,
       validatedPlan.transitionPolicy,
     );
-    this.#activePlan = validatedPlan;
+    this.#activePlan = preserveActiveJourney && this.#activePlan
+      ? {
+          ...validatedPlan,
+          userJourney: structuredClone(this.#activePlan.userJourney),
+          soundscape: { ...validatedPlan.soundscape, action: structuredClone(actionItems) },
+        }
+      : validatedPlan;
     // Publish the newly validated schedule immediately. Controllers retain
     // future elements as waiting; no clock advancement or early activation is
     // introduced at the merge boundary.
@@ -242,6 +266,19 @@ export class RuntimeController {
     }
     return result.plan;
   }
+}
+
+function preserveJourneyActions(
+  active: SceneJourneyPlan['soundscape']['action'],
+  incoming: SceneJourneyPlan['soundscape']['action'],
+): SceneJourneyPlan['soundscape']['action'] {
+  const merged = new Map(incoming.map((item) => [item.id, item]));
+  active
+    .filter((item) => item.playback?.mode === 'loop-until-arrival')
+    .forEach((item) => {
+      if (!merged.has(item.id)) merged.set(item.id, item);
+    });
+  return [...merged.values()];
 }
 
 function assertDeltaTime(deltaTimeMs: number): void {

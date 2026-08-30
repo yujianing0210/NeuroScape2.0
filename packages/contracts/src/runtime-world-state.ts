@@ -1,5 +1,5 @@
 import type { SessionTimestampMs } from './neuro-state.js';
-import type { DistancePolicy, PlaybackPolicy } from './scene-journey-plan.js';
+import type { DistancePolicy, EventMotionMode, PlaybackPolicy } from './scene-journey-plan.js';
 
 export type Vector3 = [number, number, number];
 export type Quaternion = [number, number, number, number];
@@ -56,6 +56,7 @@ export interface EventState {
   assetId: string;
   worldPosition: Vector3;
   velocity: Vector3;
+  motionMode?: EventMotionMode;
   gain: number;
   lifecycle: EventLifecycle;
   active: boolean;

@@ -233,6 +233,7 @@ export function buildDecision2OutputSchema(
       required: [
         'status',
         'destinationNodeId',
+        'traversalPreset',
         'changes',
         'selectedAssetIds',
         'reasonCodes',
@@ -241,6 +242,12 @@ export function buildDecision2OutputSchema(
       properties: {
         status: { type: 'string', enum: ['CHANGE_PROPOSED', 'NO_SAFE_CHANGE'] },
         destinationNodeId: { anyOf: [{ type: 'null' }, { type: 'string' }] },
+        traversalPreset: {
+          anyOf: [
+            { type: 'null' },
+            { type: 'string', enum: ['normal', 'slow'] },
+          ],
+        },
         changes: {
           type: 'array',
           maxItems: 3,
@@ -371,7 +378,7 @@ export function buildDecision2Prompt(
   return [
     'You are NeuroScape Decision 2: Semantic Spatial Planning.',
     'Decision 1 already decided whether and why to adapt. Do not reinterpret EEG.',
-    'Choose semantic changes only; code owns gain, timing, fades, playback, duration, position, and motion.',
+    'Choose semantic changes only; code owns gain, timing, fades, playback, duration, position, and motion. For a transition, traversalPreset may be normal or slow; never provide milliseconds.',
     'Within-scene requires a null destination and no listener locomotion. Scene-transition may choose exactly one adjacent destination.',
     'For a scene transition, select at least one supplied destination foundation ambient for INSERT or REPLACE so it remains audible after arrival; transient events and footsteps do not establish destination identity.',
     'High progression pressure is context, not a command. Do not create a fixed route or fixed intent-to-sound mapping.',

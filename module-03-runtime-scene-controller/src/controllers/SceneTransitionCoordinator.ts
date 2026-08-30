@@ -1,7 +1,4 @@
-import type {
-  ListenerState,
-  TransitionPolicy,
-} from '@neuroscape/contracts';
+import type { ListenerState, TransitionPolicy } from '@neuroscape/contracts';
 import { EPSILON, vectorLength } from '../core/math.js';
 import type {
   RuntimeEventBus,
@@ -10,7 +7,6 @@ import type {
 } from '../events/RuntimeEvents.js';
 
 export const SCENE_TRANSITION_STABILIZATION_MS = 5_000;
-export const SCENE_TRANSITION_MAX_CROSSFADE_MS = 25_000;
 
 export interface RuntimeSceneTransitionState {
   readonly transitionId: string;
@@ -124,7 +120,10 @@ export class SceneTransitionCoordinator {
 
     // Motion evidence keeps the lifecycle in traversal. Do not infer semantic
     // arrival from time alone; JourneyController is the location authority.
-    if (vectorLength(listener.velocity) > EPSILON && state.phase !== 'traversing')
+    if (
+      vectorLength(listener.velocity) > EPSILON &&
+      state.phase !== 'traversing'
+    )
       this.#setPhase('traversing');
   }
 
@@ -136,10 +135,7 @@ export class SceneTransitionCoordinator {
       ...base,
       defaultDurationMs: Math.max(
         base.defaultDurationMs,
-        Math.min(
-          SCENE_TRANSITION_MAX_CROSSFADE_MS,
-          state.arrivalTimeMs - this.#timestampMs,
-        ),
+        state.arrivalTimeMs - this.#timestampMs,
       ),
     };
   }
@@ -182,9 +178,7 @@ export class SceneTransitionCoordinator {
   }
 
   get state(): RuntimeSceneTransitionState | undefined {
-    return this.#state
-      ? Object.freeze({ ...this.#state })
-      : undefined;
+    return this.#state ? Object.freeze({ ...this.#state }) : undefined;
   }
 
   get active(): boolean {

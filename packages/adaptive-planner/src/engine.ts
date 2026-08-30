@@ -127,6 +127,9 @@ export class AdaptivePlannerEngine {
         : spatialElapsedMs >= this.#config.progressionPressureMediumMs
           ? ('medium' as const)
           : ('low' as const);
+    const pendingSceneTransition = this.hasPendingSceneTransition();
+    const restrictions = restrictionsFor(state, this.#history, this.#config);
+    if (pendingSceneTransition) restrictions.allowSceneTransition = false;
     const eligibility = {
       ...evaluateEligibility(
         state,
@@ -194,12 +197,17 @@ export class AdaptivePlannerEngine {
       recentStates: structuredClone(this.#checkpointStates.slice(-6)),
       currentPlan: structuredClone(this.#currentPlan),
       history: structuredClone(this.#history),
-      restrictions: restrictionsFor(state, this.#history, this.#config),
+      restrictions,
       secondsSinceLastMeaningfulChange,
       stasisPressure,
       secondsSinceLastSpatialProgression,
+      lastSpatialProgressionMs: this.#lastSpatialProgressionMs,
+      committedSceneTransitionCount: this.#history.filter(
+        (item) => item.scope === 'scene-transition',
+      ).length,
       progressionPressure,
-      transitionInProgress: state.timestampMs < this.#transitionUntilMs,
+      transitionInProgress:
+        pendingSceneTransition || state.timestampMs < this.#transitionUntilMs,
       adaptationProgress: {
         applied: this.#history.length,
         targetMin: this.#config.targetAdaptationsMin,
@@ -221,6 +229,13 @@ export class AdaptivePlannerEngine {
       }
       result.decision = decision;
       if (!decision.shouldAdapt) return result;
+      if (
+        decision.scope === 'scene-transition' &&
+        this.hasPendingSceneTransition()
+      ) {
+        result.eligibility.reasons.push('scene_transition_pending');
+        return result;
+      }
       const adaptationId = `adapt-${state.timestampMs}`;
       const terminal = (
         terminalStatus: AdaptationTerminalOutcome['terminalStatus'],
@@ -526,6 +541,16 @@ export class AdaptivePlannerEngine {
   get history(): readonly AdaptationHistoryItem[] {
     return structuredClone(this.#history);
   }
+
+  get lastSpatialProgressionMs(): number {
+    return this.#lastSpatialProgressionMs;
+  }
+
+  private hasPendingSceneTransition(): boolean {
+    return [...this.#pendingApplications.values()].some(
+      (pending) => pending.patch.journeyUpdate !== undefined,
+    );
+  }
   get attentionStates(): readonly AttentionState[] {
     return structuredClone(this.#interpreter.states);
   }
@@ -681,15 +706,19 @@ export class AdaptivePlannerEngine {
     },
   ): void {
     this.#pendingApplications.delete(adaptationId);
-    if (pending.previousBasePlan) this.#basePlan = structuredClone(pending.previousBasePlan);
-    if (pending.previousPlan) this.#currentPlan = structuredClone(pending.previousPlan);
+    if (pending.previousBasePlan)
+      this.#basePlan = structuredClone(pending.previousBasePlan);
+    if (pending.previousPlan)
+      this.#currentPlan = structuredClone(pending.previousPlan);
     if (pending.previousTransitionUntilMs !== undefined)
       this.#transitionUntilMs = pending.previousTransitionUntilMs;
     if (pending.previousLastSpatialProgressionMs !== undefined)
       this.#lastSpatialProgressionMs = pending.previousLastSpatialProgressionMs;
     this.#acceptedPatches.length = 0;
     if (pending.previousAcceptedPatches)
-      this.#acceptedPatches.push(...structuredClone(pending.previousAcceptedPatches));
+      this.#acceptedPatches.push(
+        ...structuredClone(pending.previousAcceptedPatches),
+      );
     this.#history.length = 0;
     if (pending.previousHistory)
       this.#history.push(...structuredClone(pending.previousHistory));

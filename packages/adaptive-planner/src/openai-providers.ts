@@ -172,6 +172,9 @@ export function buildDecision1Prompt(context: DecisionContext): string {
           context.currentPlan.userJourney.waypoints.at(-1)?.locationId,
         secondsSinceLastSpatialProgression:
           context.secondsSinceLastSpatialProgression ?? 0,
+        lastSpatialProgressionMs: context.lastSpatialProgressionMs,
+        committedSceneTransitionCount:
+          context.committedSceneTransitionCount ?? 0,
         progressionPressure: context.progressionPressure ?? 'low',
         appliedSceneTransitions: context.history.filter(
           (item) => item.scope === 'scene-transition',

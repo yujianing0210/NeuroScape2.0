@@ -12,7 +12,13 @@ import type { FuturePatchOperation, FutureScenePatch } from './patching.js';
 import type { AdaptationDecision, Decision2SemanticOutput } from './types.js';
 
 export const SEMANTIC_MATERIALIZER_VERSION = 'semantic_materializer_v1';
-export const SCENE_TRAVERSAL_DURATION_MS = 25_000;
+export const TRAVERSAL_DURATION_PRESETS_MS = Object.freeze({
+  normal: 24_000,
+  slow: 36_000,
+});
+export const SCENE_TRAVERSAL_DURATION_MS = TRAVERSAL_DURATION_PRESETS_MS.normal;
+export const TRANSITION_FOOTSTEP_GAIN_PRESET = 0.32;
+const TRANSITION_FOOTSTEP_GAIN_CEILING = 0.5;
 const MIX_GAIN_MULTIPLIER = Object.freeze({
   default: 1,
   slightly_softer: 0.85,
@@ -120,6 +126,82 @@ function insertedElement(
   };
 }
 
+function activeAmbientAt(base: BaseScenePlan, timestampMs: number) {
+  return base.scheduledElements.filter(
+    (element) =>
+      element.layer === 'ambient' &&
+      element.startMs <= timestampMs &&
+      timestampMs < element.endMs,
+  );
+}
+
+function materializeFoundationInsert(options: {
+  assetId: string;
+  destination: string;
+  currentNodeId: string;
+  startMs: number;
+  transitionMs: number;
+  insertedElement: BasePlanElement;
+  basePlan: BaseScenePlan;
+}): FuturePatchOperation[] {
+  const activeAmbient = activeAmbientAt(options.basePlan, options.startMs);
+  const alreadyActive = activeAmbient.find(
+    (element) => element.assetId === options.assetId && element.replaceable,
+  );
+  const committedFoundation = activeAmbient.find(
+    (element) =>
+      element.destinationFoundationFor === options.currentNodeId &&
+      element.replaceable,
+  );
+  const currentFoundationAssetIds = new Set(
+    getSceneNode(options.currentNodeId)?.audio_coverage.foundation ?? [],
+  );
+  const authoredCurrentFoundation = activeAmbient.find(
+    (element) =>
+      currentFoundationAssetIds.has(element.assetId) && element.replaceable,
+  );
+  const target =
+    alreadyActive ?? committedFoundation ?? authoredCurrentFoundation;
+  if (!target)
+    return [
+      {
+        operation: 'INSERT',
+        effectiveStartMs: options.startMs,
+        transitionMs: options.transitionMs,
+        insertedElement: options.insertedElement,
+        destinationFoundationFor: options.destination,
+      },
+    ];
+  if (alreadyActive)
+    return [
+      {
+        operation: 'REPLACE',
+        targetElementId: alreadyActive.elementId,
+        effectiveStartMs: options.startMs,
+        transitionMs: options.transitionMs,
+        replacementAssetId: options.assetId,
+        destinationFoundationFor: options.destination,
+      },
+    ];
+  const handoff: FuturePatchOperation[] = [
+    {
+      operation: 'INSERT',
+      effectiveStartMs: options.startMs,
+      transitionMs: options.transitionMs,
+      insertedElement: options.insertedElement,
+      destinationFoundationFor: options.destination,
+    },
+    {
+      operation: 'SUPPRESS',
+      targetElementId: target.elementId,
+      effectiveStartMs: options.startMs,
+      transitionMs: options.transitionMs,
+      systemGenerated: 'scene_transition_foundation_handoff',
+    },
+  ];
+  return handoff;
+}
+
 /** Deterministic authored-surface choice for listener locomotion. */
 export function footstepAssetForTransition(
   fromNodeId: string,
@@ -147,6 +229,8 @@ export function materializeSemanticDecision2(options: {
 }): FutureScenePatch {
   const { output, decision, basePlan, config } = options;
   const startMs = options.nowMs + config.executionFreezeBufferMs;
+  const traversalDurationMs =
+    TRAVERSAL_DURATION_PRESETS_MS[output.traversalPreset ?? 'normal'];
   const currentNodeId = normalizeLegacyLocationId(
     basePlan.journey.waypoints.at(-1)?.locationId ?? 'forest_clearing',
   );
@@ -240,15 +324,26 @@ export function materializeSemanticDecision2(options: {
           decision.salience,
         );
         if (element)
-          operations.push({
-            operation: 'INSERT',
-            effectiveStartMs: startMs,
-            transitionMs: basePlan.transitionPolicy.defaultDurationMs,
-            insertedElement: element,
+          operations.push(
             ...(destination && change.semanticRole === 'foundation'
-              ? { destinationFoundationFor: destination }
-              : {}),
-          });
+              ? materializeFoundationInsert({
+                  assetId,
+                  destination,
+                  currentNodeId,
+                  startMs,
+                  transitionMs: traversalDurationMs,
+                  insertedElement: element,
+                  basePlan,
+                })
+              : [
+                  {
+                    operation: 'INSERT' as const,
+                    effectiveStartMs: startMs,
+                    transitionMs: basePlan.transitionPolicy.defaultDurationMs,
+                    insertedElement: element,
+                  },
+                ]),
+          );
       }
     });
   if (destination && validTransition) {
@@ -269,16 +364,28 @@ export function materializeSemanticDecision2(options: {
         destination,
         'default',
         basePlan,
-        SCENE_TRAVERSAL_DURATION_MS,
+        traversalDurationMs,
       );
-      if (footsteps)
+      if (footsteps) {
+        footsteps.gain = Math.min(
+          TRANSITION_FOOTSTEP_GAIN_CEILING,
+          Math.max(footsteps.gain, TRANSITION_FOOTSTEP_GAIN_PRESET),
+        );
+        const payload =
+          footsteps.payload as import('@neuroscape/contracts').ActionPlanItem;
+        payload.gain = footsteps.gain;
+        payload.playback = {
+          mode: 'loop-until-arrival',
+          durationPolicy: 'truncate-at-end',
+        };
         operations.push({
           operation: 'INSERT',
           effectiveStartMs: startMs,
-          transitionMs: SCENE_TRAVERSAL_DURATION_MS,
+          transitionMs: traversalDurationMs,
           insertedElement: footsteps,
           systemGenerated: 'scene_transition_footsteps',
         });
+      }
     }
   }
   return {
@@ -310,7 +417,7 @@ export function materializeSemanticDecision2(options: {
           journeyUpdate: {
             fromNodeId: currentNodeId,
             toNodeId: destination,
-            arrivalTimeMs: startMs + SCENE_TRAVERSAL_DURATION_MS,
+            arrivalTimeMs: startMs + traversalDurationMs,
           },
         }
       : {}),

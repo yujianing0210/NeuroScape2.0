@@ -78,6 +78,8 @@ export interface EventPlanItem {
   distancePolicy?: DistancePolicy;
   playback?: PlaybackPolicy;
   gain: number;
+  /** Perceptual foreground request retained for deterministic runtime mixing. */
+  foregroundSalience?: 'minimal' | 'low' | 'moderate';
 }
 
 export interface SoundscapePlan {

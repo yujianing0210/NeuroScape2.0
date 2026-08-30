@@ -7,6 +7,8 @@ import {
   type AudioPlaybackEvidence,
   type AudioExecutionDiagnostic,
   type AudioPlaybackEndReason,
+  type AudioPlaybackTerminalStatus,
+  audioLibraryById,
 } from '@neuroscape/contracts';
 import { AudioAssetError } from './AudioAssetManager.js';
 import type { AudioAssetManager } from './AudioAssetManager.js';
@@ -29,6 +31,8 @@ export interface RuntimeSound {
   runtimeActivationMs?: number;
   plannedEndMs?: number;
   runtimeFinishedMs?: number;
+  foregroundSalience?: 'minimal' | 'low' | 'moderate';
+  foregroundEnvelope?: number;
 }
 export interface ManagedSource extends PlaybackTarget {
   key: string;
@@ -52,6 +56,7 @@ export interface ManagedSource extends PlaybackTarget {
   runtimeActivationPublished: boolean;
   audioStartedPublished: boolean;
   audioFinishedPublished: boolean;
+  terminalPublished: boolean;
 }
 export interface AudioSourceDiagnostics extends SpatialDiagnostics {
   runtimeId: string;
@@ -88,7 +93,8 @@ export class SourceManager {
     hrtf: HRTFRenderer,
     onChange: () => void = () => undefined,
     onEvidence: (evidence: AudioPlaybackEvidence) => void = () => undefined,
-    onDiagnostic: (diagnostic: AudioExecutionDiagnostic) => void = () => undefined,
+    onDiagnostic: (diagnostic: AudioExecutionDiagnostic) => void = () =>
+      undefined,
   ) {
     this.#context = context;
     this.#master = master;
@@ -125,31 +131,41 @@ export class SourceManager {
     );
     for (const [key, source] of this.sources)
       if (!desired.has(key)) this.#release(key, source, 'cancelled');
+    const dominantAmbientGain = state.ambient
+      .filter((sound) => sound.active)
+      .reduce((maximum, sound) => Math.max(maximum, sound.gain), 0);
     desired.forEach(({ category, sound }, key) =>
-      this.#update(key, category, sound, state.listener, state.timestampMs),
+      this.#update(
+        key,
+        category,
+        sound,
+        state.listener,
+        state.timestampMs,
+        dominantAmbientGain,
+      ),
     );
   }
 
   diagnostics(): AudioSourceDiagnostics[] {
     return [...this.sources.values()].map((source) => ({
-        ...(source.diagnostics ?? {
-          relativePosition: [0, 0, 0] as Vector3,
-          listenerSpacePosition: [0, 0, 0] as Vector3,
-          azimuthDegrees: 0,
-          elevationDegrees: 0,
-          distance: 0,
-        }),
-        runtimeId: source.runtimeId,
-        assetId: source.assetId,
-        category: source.category,
-        playbackState: source.playbackState,
-        gain: source.gainNode.gain.value,
-        plannedStartMs: source.plannedStartMs,
-        runtimeActivationMs: source.runtimeActivationMs,
-        audioStartMs: source.audioStartMs,
-        errorCode: source.error?.code,
-        errorMessage: source.error?.message,
-      }));
+      ...(source.diagnostics ?? {
+        relativePosition: [0, 0, 0] as Vector3,
+        listenerSpacePosition: [0, 0, 0] as Vector3,
+        azimuthDegrees: 0,
+        elevationDegrees: 0,
+        distance: 0,
+      }),
+      runtimeId: source.runtimeId,
+      assetId: source.assetId,
+      category: source.category,
+      playbackState: source.playbackState,
+      gain: source.gainNode.gain.value,
+      plannedStartMs: source.plannedStartMs,
+      runtimeActivationMs: source.runtimeActivationMs,
+      audioStartMs: source.audioStartMs,
+      errorCode: source.error?.code,
+      errorMessage: source.error?.message,
+    }));
   }
 
   dispose(): void {
@@ -184,6 +200,7 @@ export class SourceManager {
       runtimeActivationPublished: false,
       audioStartedPublished: false,
       audioFinishedPublished: false,
+      terminalPublished: false,
     };
     source.onPlaybackEnded = () => {
       source.playbackState = 'stopped';
@@ -194,10 +211,7 @@ export class SourceManager {
     return source;
   }
 
-  #failIfStalled(
-    source: ManagedSource,
-    timestampMs: number,
-  ): boolean {
+  #failIfStalled(source: ManagedSource, timestampMs: number): boolean {
     if (
       source.runtimeActivationMs === undefined ||
       source.playbackState !== 'loading'
@@ -223,6 +237,7 @@ export class SourceManager {
     sound: RuntimeSound,
     listener: ListenerState,
     timestampMs: number,
+    dominantAmbientGain: number,
   ): void {
     let source = this.sources.get(key);
     if (source && source.assetId !== sound.assetId) {
@@ -235,6 +250,7 @@ export class SourceManager {
       source.runtimeActivationPublished = false;
       source.audioStartedPublished = false;
       source.audioFinishedPublished = false;
+      source.terminalPublished = false;
       source.audioStartMs = undefined;
     }
     source.plannedStartMs = sound.plannedStartMs;
@@ -250,9 +266,11 @@ export class SourceManager {
       this.#publish(source, 'RUNTIME_ACTIVATED', source.runtimeActivationMs);
     }
     if (this.#failIfStalled(source, timestampMs)) return;
-    // Safety and authoring constraints belong in deterministic validation. At
-    // this boundary the validated runtime gain is authoritative.
-    const resolvedGain = sound.gain;
+    const resolvedGain = this.#resolveGain(
+      category,
+      sound,
+      dominantAmbientGain,
+    );
     this.#gains.apply(
       source.gainNode.gain,
       resolvedGain,
@@ -292,6 +310,12 @@ export class SourceManager {
           sound.lifecycle === 'finished' ? 'planned_end' : 'cancelled',
           timestampMs,
         );
+      else if (
+        source.category === 'event' &&
+        source.runtimeActivationPublished &&
+        !source.terminalPublished
+      )
+        this.#publishCancelled(source, timestampMs);
       this.#playback.stop(source, this.#context.currentTime);
       this.#playback.resetActivation(source);
       source.playbackState = 'stopped';
@@ -338,22 +362,40 @@ export class SourceManager {
       }
       if (source.playbackState !== 'loading') return;
       const startAt = this.#audioTimeFor(timestampMs);
-      const started =
-        playback.mode === 'repeat'
-          ? this.#playback.startBurst(
-              source,
-              result.buffer,
-              startAt,
-              playback.repeatCount!,
-              playback.repeatGapMs! / 1_000,
-            )
-          : this.#playback.start(
-              source,
-              result.buffer,
-              playback.mode === 'loop' ||
-                playback.durationPolicy === 'loop-until-end',
-              startAt,
-            );
+      let started: boolean;
+      try {
+        started =
+          playback.mode === 'repeat'
+            ? this.#playback.startBurst(
+                source,
+                result.buffer,
+                startAt,
+                playback.repeatCount!,
+                playback.repeatGapMs! / 1_000,
+              )
+            : this.#playback.start(
+                source,
+                result.buffer,
+                playback.mode === 'loop' ||
+                  playback.durationPolicy === 'loop-until-end',
+                startAt,
+              );
+      } catch (cause) {
+        source.playbackState = 'error';
+        source.error = new AudioAssetError(
+          'SOURCE_CREATION_FAILED',
+          source.assetId,
+          `Failed to create or start audio source for ${source.assetId}.`,
+          cause,
+        );
+        this.#publishFailure(
+          source,
+          source.error,
+          this.#sessionNow(timestampMs, loadRequestedAtAudioTime),
+        );
+        this.#onChange();
+        return;
+      }
       if (started && playback.mode === 'repeat' && playback.perRepeatGain) {
         this.#gains.applyBurstSequence(
           source.gainNode.gain,
@@ -452,7 +494,16 @@ export class SourceManager {
     this.#publish(source, 'AUDIO_FINISHED', timestampMs, {
       audioEndMs: timestampMs,
       endReason,
+      ...(source.category === 'event'
+        ? {
+            playbackTerminalStatus:
+              endReason === 'natural' || endReason === 'planned_end'
+                ? ('PLAYED' as const)
+                : ('RUNTIME_CANCELLED' as const),
+          }
+        : {}),
     });
+    if (source.category === 'event') source.terminalPublished = true;
   }
 
   #publishFailure(
@@ -460,9 +511,48 @@ export class SourceManager {
     error: AudioAssetError,
     timestampMs: number,
   ): void {
+    if (source.terminalPublished) return;
+    const playbackTerminalStatus: AudioPlaybackTerminalStatus =
+      error.code === 'SOURCE_CREATION_FAILED'
+        ? 'SOURCE_CREATION_FAILED'
+        : error.code === 'FETCH_FAILED' ||
+            error.code === 'DECODE_FAILED' ||
+            error.code === 'NOT_REGISTERED'
+          ? 'ASSET_LOAD_FAILED'
+          : 'AUDIO_START_FAILED';
     this.#publish(source, 'AUDIO_FAILED', timestampMs, {
       failureCode: error.code,
       failureReason: error.message,
+      ...(source.category === 'event' ? { playbackTerminalStatus } : {}),
+    });
+    if (source.category === 'event') source.terminalPublished = true;
+  }
+
+  #publishCancelled(source: ManagedSource, timestampMs: number): void {
+    this.#publish(source, 'AUDIO_FAILED', timestampMs, {
+      failureCode: 'RUNTIME_CANCELLED',
+      failureReason: `Runtime cancelled ${source.assetId} before playback completed.`,
+      playbackTerminalStatus: 'RUNTIME_CANCELLED',
+    });
+    source.terminalPublished = true;
+  }
+
+  #resolveGain(
+    category: SourceCategory,
+    sound: RuntimeSound,
+    dominantAmbientGain: number,
+  ): number {
+    if (category !== 'event') return sound.gain;
+    const asset = audioLibraryById.get(sound.assetId);
+    if (!asset) return sound.gain;
+    return this.#gains.resolveForegroundGain({
+      runtimeGain: sound.gain,
+      authoredRecommendedGain:
+        asset.recommended_volume * (sound.foregroundEnvelope ?? 1),
+      dominantAmbientGain:
+        dominantAmbientGain * (sound.foregroundEnvelope ?? 1),
+      salience: sound.foregroundSalience ?? 'minimal',
+      maxSafeGain: asset.gain_profile?.max_safe_gain ?? 1,
     });
   }
 
@@ -473,6 +563,12 @@ export class SourceManager {
   ): void {
     source.generation += 1;
     if (source.playing) this.#publishFinished(source, endReason);
+    else if (
+      source.category === 'event' &&
+      source.runtimeActivationPublished &&
+      !source.terminalPublished
+    )
+      this.#publishCancelled(source, this.#sessionNow());
     this.#playback.stop(source, this.#context.currentTime);
     source.gainNode.disconnect();
     if (source.spatializer) this.#hrtf.release(key, source.spatializer);

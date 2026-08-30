@@ -20,7 +20,8 @@ export class AudioAssetError extends Error {
       | 'FETCH_FAILED'
       | 'DECODE_FAILED'
       | 'INVALID_PLAYBACK_POLICY'
-      | 'AUDIO_START_TIMEOUT',
+      | 'AUDIO_START_TIMEOUT'
+      | 'SOURCE_CREATION_FAILED',
     readonly assetId: string,
     message: string,
     readonly cause?: unknown,
@@ -30,9 +31,7 @@ export class AudioAssetError extends Error {
   }
 }
 
-export type AudioFetcher = (
-  url: string,
-) => Promise<{
+export type AudioFetcher = (url: string) => Promise<{
   ok: boolean;
   status: number;
   arrayBuffer(): Promise<ArrayBuffer>;

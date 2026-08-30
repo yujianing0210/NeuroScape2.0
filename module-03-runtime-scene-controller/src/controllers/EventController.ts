@@ -42,6 +42,12 @@ interface EventRuntimeObject {
   runtimeFinishedMs?: number;
 }
 
+export const SHORT_EVENT_ENVELOPE = Object.freeze({
+  fadeInMs: 750,
+  fadeOutMs: 1_000,
+  minimumAudiblePlateauMs: 3_000,
+}); // TBD_PILOT
+
 export class EventController {
   readonly #objects = new Map<string, EventRuntimeObject>();
   #policy: TransitionPolicy = { defaultDurationMs: 1, curve: 'linear' };
@@ -141,7 +147,7 @@ export class EventController {
         this.transitions.scheduleActivation(
           object.transitionKey,
           object.baseGain,
-          this.fadeDuration(object),
+          this.envelope(object).fadeInMs,
           this.#policy.curve,
         );
       }
@@ -169,7 +175,7 @@ export class EventController {
         });
         continue;
       }
-      const fadeDurationMs = this.fadeDuration(object);
+      const fadeDurationMs = this.envelope(object).fadeOutMs;
       if (
         !object.removalScheduled &&
         this.#timestampMs >= endTimeMs - fadeDurationMs
@@ -188,8 +194,9 @@ export class EventController {
 
   getStates(listener: ListenerState): EventState[] {
     return [...this.#objects.values()].map((object) => {
+      const envelopeGain = this.transitions.getValue(object.transitionKey, 0);
       const gain =
-        this.transitions.getValue(object.transitionKey, 0) *
+        envelopeGain *
         plannedDistanceGain(
           Math.hypot(
             object.worldPosition[0] - listener.worldPosition[0],
@@ -213,6 +220,11 @@ export class EventController {
         runtimeFinishedMs: object.runtimeFinishedMs,
         distancePolicy: structuredClone(object.plan.distancePolicy),
         playback: structuredClone(object.plan.playback),
+        foregroundSalience: object.plan.foregroundSalience,
+        foregroundEnvelope:
+          object.baseGain > EPSILON
+            ? Math.max(0, Math.min(1, envelopeGain / object.baseGain))
+            : 0,
       };
     });
   }
@@ -286,7 +298,7 @@ export class EventController {
     this.transitions.scheduleRemoval(
       object.transitionKey,
       this.transitions.getValue(object.transitionKey, 0),
-      this.fadeDuration(object),
+      this.envelope(object).fadeOutMs,
       this.#policy.curve,
     );
   }
@@ -298,8 +310,21 @@ export class EventController {
     }));
   }
 
-  private fadeDuration(_object: EventRuntimeObject): number {
-    return this.#policy.defaultDurationMs;
+  private envelope(object: EventRuntimeObject): {
+    fadeInMs: number;
+    fadeOutMs: number;
+  } {
+    const availableFadeMs = Math.max(
+      0,
+      object.durationMs - SHORT_EVENT_ENVELOPE.minimumAudiblePlateauMs,
+    );
+    const authoredFadeTotalMs =
+      SHORT_EVENT_ENVELOPE.fadeInMs + SHORT_EVENT_ENVELOPE.fadeOutMs;
+    const scale = Math.min(1, availableFadeMs / authoredFadeTotalMs);
+    return {
+      fadeInMs: SHORT_EVENT_ENVELOPE.fadeInMs * scale,
+      fadeOutMs: SHORT_EVENT_ENVELOPE.fadeOutMs * scale,
+    };
   }
 }
 

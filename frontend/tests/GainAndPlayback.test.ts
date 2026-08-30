@@ -12,6 +12,27 @@ import {
 } from './audioFakes.js';
 
 describe('gain and playback scheduling', () => {
+  it('protects foreground audibility without exceeding the asset safety cap', () => {
+    const gains = new GainManager();
+    expect(
+      gains.resolveForegroundGain({
+        runtimeGain: 0.0212,
+        authoredRecommendedGain: 0.24,
+        dominantAmbientGain: 0.38,
+        salience: 'low',
+        maxSafeGain: 0.24,
+      }),
+    ).toBeCloseTo(0.18);
+    expect(
+      gains.resolveForegroundGain({
+        runtimeGain: 0.4,
+        authoredRecommendedGain: 0.24,
+        dominantAmbientGain: 0.8,
+        salience: 'moderate',
+        maxSafeGain: 0.24,
+      }),
+    ).toBe(0.24);
+  });
   it('ramps authoritative gain using AudioParam scheduling', () => {
     const parameter = new FakeAudioParam();
     parameter.value = 0.2;

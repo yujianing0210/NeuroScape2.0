@@ -8,6 +8,13 @@ export type AudioPlaybackEvidenceStatus =
 export type AudioPlaybackEndReason =
   'natural' | 'planned_end' | 'cancelled' | 'replaced' | 'session_ended';
 
+export type AudioPlaybackTerminalStatus =
+  | 'PLAYED'
+  | 'ASSET_LOAD_FAILED'
+  | 'SOURCE_CREATION_FAILED'
+  | 'AUDIO_START_FAILED'
+  | 'RUNTIME_CANCELLED';
+
 export interface AudioPlaybackEvidence {
   adaptationId: string;
   elementId: string;
@@ -24,6 +31,8 @@ export interface AudioPlaybackEvidence {
   endReason?: AudioPlaybackEndReason;
   failureCode?: string;
   failureReason?: string;
+  /** Exactly one terminal outcome is emitted for each activated one-shot. */
+  playbackTerminalStatus?: AudioPlaybackTerminalStatus;
   decision2RequestStartMs?: number;
   decision2ResponseMs?: number;
   patchValidationCompleteMs?: number;

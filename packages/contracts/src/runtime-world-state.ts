@@ -65,6 +65,9 @@ export interface EventState {
   runtimeFinishedMs?: number;
   distancePolicy?: DistancePolicy;
   playback?: PlaybackPolicy;
+  foregroundSalience?: 'minimal' | 'low' | 'moderate';
+  /** Normalized authored event envelope, kept separate from spatial gain. */
+  foregroundEnvelope?: number;
 }
 
 export interface RuntimeJourneyState {

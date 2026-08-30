@@ -40,6 +40,7 @@ function insertedElement(
   mix: keyof typeof MIX_GAIN_MULTIPLIER | null,
   base: BaseScenePlan,
   durationOverrideMs?: number,
+  foregroundSalience?: AdaptationDecision['salience'],
 ): BasePlanElement | undefined {
   const asset = audioLibraryById.get(assetId);
   if (!asset?.playback_contract) return undefined;
@@ -100,6 +101,7 @@ function insertedElement(
             trajectoryUpdatePolicy: 'replace-at-effective-time' as const,
             playback,
             gain,
+            foregroundSalience,
           };
   return {
     elementId: id,
@@ -234,6 +236,8 @@ export function materializeSemanticDecision2(options: {
           destination ?? currentNodeId,
           change.mixIntent,
           basePlan,
+          undefined,
+          decision.salience,
         );
         if (element)
           operations.push({

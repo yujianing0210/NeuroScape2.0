@@ -16,6 +16,90 @@ import { snapshot } from './fixtures.js';
 const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 describe('SourceManager', () => {
+  it('raises a canonical event above a dominant ambient audibility floor', async () => {
+    const context = new FakeAudioContext();
+    const master = new FakeNode() as unknown as AudioNode;
+    const manager = new SourceManager(
+      context as unknown as BaseAudioContext,
+      master,
+      new AudioAssetManager(
+        [{ assetId: 'forest_leaf_rustle_mid_01', url: '/rustle' }],
+        async () => fakeBuffer,
+        async () => ({
+          ok: true,
+          status: 200,
+          arrayBuffer: async () => new ArrayBuffer(1),
+        }),
+      ),
+      new GainManager(),
+      new PlaybackScheduler(context as unknown as BaseAudioContext),
+      new HRTFRenderer(context as unknown as BaseAudioContext, master),
+    );
+    const state = snapshot();
+    state.ambient = [{ ...state.ambient[0]!, gain: 0.38 }];
+    state.action = [];
+    state.event = [
+      {
+        ...state.event[0]!,
+        assetId: 'forest_leaf_rustle_mid_01',
+        gain: 0.0212,
+        foregroundSalience: 'low',
+      },
+    ];
+    manager.reconcile(state);
+    await flush();
+    expect(manager.sources.get('event:bird')?.gainNode.gain.value).toBeCloseTo(
+      0.18,
+    );
+    state.event[0] = {
+      ...state.event[0]!,
+      gain: 0,
+      foregroundEnvelope: 0,
+    };
+    manager.reconcile(state);
+    expect(manager.sources.get('event:bird')?.gainNode.gain.value).toBe(0);
+  });
+
+  it('records one-shot completion as the PLAYED terminal outcome', async () => {
+    const context = new FakeAudioContext();
+    const master = new FakeNode() as unknown as AudioNode;
+    const evidence: AudioPlaybackEvidence[] = [];
+    const manager = new SourceManager(
+      context as unknown as BaseAudioContext,
+      master,
+      new AudioAssetManager(
+        [{ assetId: 'event.bird', url: '/bird' }],
+        async () => fakeBuffer,
+        async () => ({
+          ok: true,
+          status: 200,
+          arrayBuffer: async () => new ArrayBuffer(1),
+        }),
+      ),
+      new GainManager(),
+      new PlaybackScheduler(context as unknown as BaseAudioContext),
+      new HRTFRenderer(context as unknown as BaseAudioContext, master),
+      () => undefined,
+      (event) => evidence.push(event),
+    );
+    const state = snapshot(1_000);
+    state.ambient = [];
+    state.action = [];
+    state.event = [
+      {
+        ...state.event[0]!,
+        adaptationId: 'adapt-event',
+        runtimeActivationMs: 1_000,
+      },
+    ];
+    manager.reconcile(state);
+    await flush();
+    context.sources[0]?.onended?.();
+    expect(evidence.at(-1)).toMatchObject({
+      status: 'AUDIO_FINISHED',
+      playbackTerminalStatus: 'PLAYED',
+    });
+  });
   it('executes explicit loop/duration policy and exposes start timing', async () => {
     const context = new FakeAudioContext();
     const master = new FakeNode() as unknown as AudioNode;
@@ -331,6 +415,7 @@ describe('SourceManager', () => {
       status: 'AUDIO_FAILED',
       failureCode: 'AUDIO_START_TIMEOUT',
       assetId: 'event.bird',
+      playbackTerminalStatus: 'AUDIO_START_FAILED',
     });
   });
 
@@ -376,7 +461,8 @@ describe('SourceManager', () => {
     const context = new FakeAudioContext();
     const master = new FakeNode() as unknown as AudioNode;
     const evidence: AudioPlaybackEvidence[] = [];
-    const diagnostics: import('@neuroscape/contracts').AudioExecutionDiagnostic[] = [];
+    const diagnostics: import('@neuroscape/contracts').AudioExecutionDiagnostic[] =
+      [];
     const manager = new SourceManager(
       context as unknown as BaseAudioContext,
       master,

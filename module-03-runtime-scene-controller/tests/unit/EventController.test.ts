@@ -99,6 +99,21 @@ describe('EventController', () => {
     );
   });
 
+  it('keeps a three-second audible plateau and does not reuse the generic fade', () => {
+    const { controller, transitions } = createEvents();
+    controller.initialize([eventPlan], {
+      defaultDurationMs: 5_000,
+      curve: 'linear',
+    });
+    controller.update(1_000, listener);
+    transitions.update(750);
+    expect(controller.getStates(listener)[0]?.gain).toBeCloseTo(0.8);
+    expect(controller.getStates(listener)[0]?.foregroundEnvelope).toBe(1);
+    controller.update(2_250, listener);
+    transitions.update(2_250);
+    expect(controller.getStates(listener)[0]?.gain).toBeCloseTo(0.8);
+  });
+
   it('is frame-rate independent along a deterministic trajectory', () => {
     const directHarness = createEvents();
     const splitHarness = createEvents();

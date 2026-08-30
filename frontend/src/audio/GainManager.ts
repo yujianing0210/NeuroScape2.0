@@ -8,6 +8,33 @@ export class GainManager {
   setMaster(parameter: AudioParam, gain: number, time: number): void {
     this.apply(parameter, Math.min(1, Math.max(0, gain)), time);
   }
+  resolveForegroundGain(options: {
+    runtimeGain: number;
+    authoredRecommendedGain: number;
+    dominantAmbientGain: number;
+    salience: 'minimal' | 'low' | 'moderate';
+    maxSafeGain: number;
+    normalizationGain?: number;
+  }): number {
+    const salience = {
+      minimal: { ambientRatio: 0.28, authoredRatio: 0.55 },
+      low: { ambientRatio: 0.4, authoredRatio: 0.75 },
+      moderate: { ambientRatio: 0.55, authoredRatio: 0.9 },
+    }[options.salience];
+    const normalizedAuthored =
+      options.authoredRecommendedGain * (options.normalizationGain ?? 1);
+    const detectableFloor = Math.max(
+      normalizedAuthored * salience.authoredRatio,
+      options.dominantAmbientGain * salience.ambientRatio,
+    );
+    return Math.max(
+      0,
+      Math.min(
+        options.maxSafeGain,
+        Math.max(options.runtimeGain, detectableFloor),
+      ),
+    );
+  }
   applyEnvelope(
     parameter: AudioParam,
     peak: number,

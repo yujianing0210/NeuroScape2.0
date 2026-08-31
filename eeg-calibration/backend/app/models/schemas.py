@@ -4,7 +4,7 @@ import re
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class CalibrationState(str, Enum):
@@ -15,7 +15,6 @@ class CalibrationState(str, Enum):
     ACCLIMATION_COMPLETE = "ACCLIMATION_COMPLETE"
     BLOCK_READY = "BLOCK_READY"
     BLOCK_RECORDING = "BLOCK_RECORDING"
-    SELF_REPORT = "SELF_REPORT"
     PROCESSING = "PROCESSING"
     COMPLETE = "COMPLETE"
     ERROR = "ERROR"
@@ -35,24 +34,6 @@ class SessionCreate(BaseModel):
 
 class CalibrationStart(BaseModel):
     quality_override: bool = False
-
-
-class SelfReportSubmit(BaseModel):
-    focus: int | None = Field(default=None, ge=1, le=7)
-    drowsiness: int | None = Field(default=None, ge=1, le=7)
-    investigator_notes: str = Field(default="", max_length=2000)
-    unable_to_judge: bool = False
-
-    @field_validator("investigator_notes")
-    @classmethod
-    def normalize_notes(cls, value: str) -> str:
-        return value.strip()
-
-    @model_validator(mode="after")
-    def require_ratings_when_judged(self):
-        if not self.unable_to_judge and (self.focus is None or self.drowsiness is None):
-            raise ValueError("Both 1–7 ratings are required unless unable to judge")
-        return self
 
 
 class GuidanceEventSubmit(BaseModel):

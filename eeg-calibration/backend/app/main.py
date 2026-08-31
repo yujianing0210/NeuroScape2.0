@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from app import config
 from app.calibration.machine import InvalidTransition
 from app.calibration.service import CalibrationService
-from app.models.schemas import CalibrationStart, EEGSample, GuidanceEventSubmit, ReplayProcessSubmit, SelfReportSubmit, SessionCreate
+from app.models.schemas import CalibrationStart, EEGSample, GuidanceEventSubmit, ReplayProcessSubmit, SessionCreate
 from app.signal_processing.core import (
     INCOMPATIBLE_PROFILE_MESSAGE,
     IncompatibleCalibrationProfile,
@@ -111,11 +111,6 @@ def end_baseline_early() -> dict:
 @app.post("/api/calibration/guidance/event")
 def guidance_event(payload: GuidanceEventSubmit) -> dict:
     return service.record_guidance_event(payload.event, payload.timing_offset_ms)
-
-
-@app.post("/api/calibration/self-report")
-def submit_self_report(payload: SelfReportSubmit) -> dict:
-    return service.submit_self_report(payload)
 
 
 @app.post("/api/calibration/reset")

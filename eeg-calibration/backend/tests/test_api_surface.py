@@ -9,7 +9,7 @@ from app.main import app
 from app.models.schemas import EEGSample
 
 
-def test_protocol_v4_api_surface_replaces_two_phase_api():
+def test_calibration_api_surface_omits_retired_self_report():
     paths = app.openapi()["paths"]
     expected = {
         "/api/calibration/acclimation/start",
@@ -18,9 +18,9 @@ def test_protocol_v4_api_surface_replaces_two_phase_api():
         "/api/calibration/acclimation/repeat",
         "/api/calibration/block/start",
         "/api/calibration/block/end-early",
-        "/api/calibration/self-report",
     }
     assert expected <= paths.keys()
+    assert "/api/calibration/self-report" not in paths
     assert "/api/calibration/relaxation/start" not in paths
     assert "/api/calibration/focus/start" not in paths
 

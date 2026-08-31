@@ -78,6 +78,7 @@ describe('study recorder server', () => {
       schemaVersion: '1.0',
       questionnaireVersion: '1.1',
       participantId: 'P007',
+      studyMode: 'quick_test',
       createdAtIso: '2026-01-01T00:00:00Z',
       updatedAtIso: '2026-01-01T00:00:00Z',
       calibrationCompleted: true,
@@ -122,6 +123,12 @@ describe('study recorder server', () => {
       ),
     ).toContain('calibration_attention');
     expect(
+      await readFile(
+        join(resultsRoot, 'P007', 'questionnaire-long.csv'),
+        'utf8',
+      ),
+    ).toContain('quick_test');
+    expect(
       JSON.parse(
         await readFile(
           join(resultsRoot, 'P007', 'participant-report.json'),
@@ -129,6 +136,14 @@ describe('study recorder server', () => {
         ),
       ).calibration.C1,
     ).toBe(5);
+    expect(
+      JSON.parse(
+        await readFile(
+          join(resultsRoot, 'P007', 'participant-report.json'),
+          'utf8',
+        ),
+      ).isQuickTest,
+    ).toBe(true);
     expect(
       await readFile(
         join(resultsRoot, 'P007', 'eeg-comparison-long.csv'),

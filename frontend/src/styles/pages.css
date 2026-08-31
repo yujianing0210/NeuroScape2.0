@@ -491,6 +491,72 @@
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   line-height: 1.45;
 }
+.developer-controls {
+  width: min(760px, 94vw);
+  padding: 1rem 1.25rem;
+  border-color: rgba(240, 163, 109, 0.42);
+}
+.developer-controls summary {
+  cursor: pointer;
+  color: #f2bf99;
+  font-weight: 700;
+}
+.developer-controls label {
+  display: flex;
+  gap: 0.85rem;
+  align-items: flex-start;
+  margin-top: 1rem;
+}
+.developer-controls label span {
+  display: grid;
+  gap: 0.35rem;
+}
+.developer-controls small {
+  color: var(--muted);
+  line-height: 1.5;
+}
+.quick-test-page {
+  justify-content: flex-start;
+  padding-top: clamp(3rem, 8vw, 7rem);
+}
+.quick-test-card {
+  width: min(760px, 94vw);
+  display: grid;
+  gap: 1.25rem;
+  padding: clamp(1.5rem, 4vw, 2.5rem);
+  border-color: rgba(240, 163, 109, 0.55);
+}
+.quick-test-card h1,
+.quick-test-card p {
+  margin: 0;
+}
+.quick-test-badge {
+  color: #f2bf99;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+.quick-test-status,
+.quick-summary-list {
+  display: grid;
+}
+.quick-test-status p,
+.quick-summary-list p {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+.quick-summary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.quick-study-summary {
+  width: min(1100px, 100%);
+  margin: 0 auto;
+}
 @media (max-width: 850px) {
   .home-entry-grid {
     grid-template-columns: 1fr;

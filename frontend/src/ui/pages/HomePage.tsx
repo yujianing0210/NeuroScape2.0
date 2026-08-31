@@ -36,6 +36,9 @@ export function HomePage({
   studyRecord,
   onParticipantRecord,
   onDashboard,
+  quickTestMode,
+  onQuickTestModeChange,
+  onQuickSession,
 }: {
   onCalibration: (intent: CalibrationSessionIntent) => void;
   onRealTime: (profile: Profile, replayFile?: File) => void | Promise<void>;
@@ -43,6 +46,12 @@ export function HomePage({
   studyRecord: ParticipantStudyRecord | null;
   onParticipantRecord: (record: ParticipantStudyRecord | null) => void;
   onDashboard: () => void;
+  quickTestMode: boolean;
+  onQuickTestModeChange: (enabled: boolean) => void;
+  onQuickSession: (
+    participantId: string,
+    condition: 'adaptive' | 'non-adaptive',
+  ) => void | Promise<void>;
 }) {
   const [participantId, setParticipantId] = useState('P001');
   const [sessions, setSessions] = useState<SavedCalibrationSession[]>([]);
@@ -104,6 +113,19 @@ export function HomePage({
   }, [normalized, sessions, selected, participantSessions]);
 
   const startRealTime = async () => {
+    if (quickTestMode) {
+      setBusy(true);
+      setError('');
+      try {
+        if (!(await confirmCondition('adaptive'))) return;
+        await onQuickSession(normalized, 'adaptive');
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : String(reason));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     if (!selected) return;
     setBusy(true);
     setError('');
@@ -126,6 +148,19 @@ export function HomePage({
     }
   };
   const startNonAdaptive = async () => {
+    if (quickTestMode) {
+      setBusy(true);
+      setError('');
+      try {
+        if (!(await confirmCondition('non-adaptive'))) return;
+        await onQuickSession(normalized, 'non-adaptive');
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : String(reason));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     if (!selected) return;
     setBusy(true);
     setError('');
@@ -258,6 +293,23 @@ export function HomePage({
           </p>
         </section>
       )}
+      <details className="glass-panel developer-controls">
+        <summary>Developer / Testing</summary>
+        <label>
+          <input
+            type="checkbox"
+            checked={quickTestMode}
+            onChange={(event) => onQuickTestModeChange(event.target.checked)}
+          />
+          <span>
+            <strong>Quick Test Mode: {quickTestMode ? 'ON' : 'OFF'}</strong>
+            <small>
+              Skips live EEG, audio, calibration duration, and meditation
+              timers. Test records are permanently labeled.
+            </small>
+          </span>
+        </label>
+      </details>
       {error && (
         <p role="alert" className="summary-error">
           {error}
@@ -376,11 +428,11 @@ export function HomePage({
           </select>
           <button
             disabled={
-              !selected ||
+              (!quickTestMode && !selected) ||
               busy ||
               (Boolean(participantRecord) &&
                 !participantRecord?.calibrationQuestionnaire) ||
-              (eegSource === 'prerecorded' && !replayFile)
+              (!quickTestMode && eegSource === 'prerecorded' && !replayFile)
             }
             onClick={() => void startRealTime()}
           >
@@ -401,11 +453,11 @@ export function HomePage({
           <button
             disabled={
               !valid ||
-              !selected ||
+              (!quickTestMode && !selected) ||
               busy ||
               (Boolean(participantRecord) &&
                 !participantRecord?.calibrationQuestionnaire) ||
-              (eegSource === 'prerecorded' && !replayFile)
+              (!quickTestMode && eegSource === 'prerecorded' && !replayFile)
             }
             onClick={() => void startNonAdaptive()}
           >

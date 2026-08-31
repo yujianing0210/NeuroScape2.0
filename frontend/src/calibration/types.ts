@@ -6,7 +6,6 @@ export type State =
   | 'ACCLIMATION_COMPLETE'
   | 'BLOCK_READY'
   | 'BLOCK_RECORDING'
-  | 'SELF_REPORT'
   | 'PROCESSING'
   | 'COMPLETE'
   | 'ERROR';

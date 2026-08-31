@@ -36,13 +36,6 @@ const startPayload = (quality_override: boolean): RequestInit => ({
   body: JSON.stringify({ quality_override }),
 });
 
-export interface SelfReportPayload {
-  focus: number | null;
-  drowsiness: number | null;
-  investigator_notes: string;
-  unable_to_judge: boolean;
-}
-
 export const api = {
   status: () => request<Status>('/status'),
   create: (participant_id: string) =>
@@ -76,11 +69,6 @@ export const api = {
     request('/calibration/guidance/event', {
       method: 'POST',
       body: JSON.stringify({ event, timing_offset_ms }),
-    }),
-  submitSelfReport: (payload: SelfReportPayload) =>
-    request('/calibration/self-report', {
-      method: 'POST',
-      body: JSON.stringify(payload),
     }),
   reset: () => request('/calibration/reset', { method: 'POST' }),
   result: () => request<Profile>('/calibration/result'),

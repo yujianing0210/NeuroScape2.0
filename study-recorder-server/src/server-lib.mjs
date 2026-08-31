@@ -56,6 +56,7 @@ function participantOutputs(record) {
   };
   const headers = [
     'participant_id',
+    'study_mode',
     'questionnaire_version',
     'stage',
     'session_number',
@@ -71,6 +72,7 @@ function participantOutputs(record) {
   const rows = submissions.flatMap((submission) =>
     submission.answers.map((item) => [
       record.participantId,
+      record.studyMode ?? 'production',
       record.questionnaireVersion,
       submission.stage,
       submission.sessionNumber ?? '',
@@ -130,6 +132,8 @@ function participantOutputs(record) {
     csv,
     report: {
       participantId: record.participantId,
+      studyMode: record.studyMode ?? 'production',
+      isQuickTest: record.studyMode === 'quick_test',
       questionnaireVersion: record.questionnaireVersion,
       recommendedOrder: record.recommendedOrder,
       actualOrder: record.actualOrder,
@@ -157,6 +161,7 @@ function participantOutputs(record) {
 async function participantEegOutputs(record, resultsRoot) {
   const headers = [
     'participant_id',
+    'study_mode',
     'session_number',
     'condition',
     'session_id',
@@ -192,6 +197,7 @@ async function participantEegOutputs(record, resultsRoot) {
       for (const metric of metrics)
         rows.push([
           record.participantId,
+          record.studyMode ?? 'production',
           session.sessionNumber,
           session.condition,
           session.sessionId,
@@ -478,8 +484,7 @@ export function createStudyServer(options = {}) {
               'access-control-allow-origin': '*',
             });
             response.end();
-          }
-          else throw error;
+          } else throw error;
         }
         return;
       }

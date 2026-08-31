@@ -22,7 +22,6 @@ def test_valid_protocol_state_machine_progression():
         CalibrationState.ACCLIMATION_COMPLETE,
         CalibrationState.BLOCK_READY,
         CalibrationState.BLOCK_RECORDING,
-        CalibrationState.SELF_REPORT,
         CalibrationState.PROCESSING,
         CalibrationState.COMPLETE,
     ):

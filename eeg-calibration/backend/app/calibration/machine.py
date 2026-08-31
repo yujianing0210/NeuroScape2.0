@@ -19,8 +19,7 @@ class CalibrationStateMachine:
             CalibrationState.IDLE,
         },
         CalibrationState.BLOCK_READY: {CalibrationState.BLOCK_RECORDING, CalibrationState.IDLE},
-        CalibrationState.BLOCK_RECORDING: {CalibrationState.SELF_REPORT, CalibrationState.IDLE},
-        CalibrationState.SELF_REPORT: {
+        CalibrationState.BLOCK_RECORDING: {
             CalibrationState.BLOCK_READY,
             CalibrationState.PROCESSING,
             CalibrationState.IDLE,

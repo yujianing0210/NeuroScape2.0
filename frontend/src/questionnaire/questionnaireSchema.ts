@@ -46,11 +46,17 @@ export interface ParticipantSessionRecord {
   post?: QuestionnaireSubmission;
   sessionDataFinalized: boolean;
   attemptStatus?: 'accepted' | 'failed' | 'excluded';
+  quickTest?: {
+    eegAvailable: false;
+    eegStreamSkipped: true;
+    sessionDurationSkipped: true;
+  };
 }
 export interface ParticipantStudyRecord {
   schemaVersion: string;
   questionnaireVersion: string;
   participantId: string;
+  studyMode: 'production' | 'quick_test';
   createdAtIso: string;
   updatedAtIso: string;
   calibrationSessionId?: string;

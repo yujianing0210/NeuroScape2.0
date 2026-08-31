@@ -27,6 +27,12 @@ study-results/P007/
 
 Questionnaire answers are used only for persistence, reporting, and interview support. They are not passed to EEG interpretation, planning, or adaptive audio.
 
+### Developer Quick Test Mode
+
+Open **Developer / Testing** on Study Home and enable **Quick Test Mode**. It is OFF by default. In this mode, explicit skip buttons replace the five-minute calibration and ten-minute meditation waits, while C1–C3, M1, Q1–Q6, comfort, F1–F3, persistence, session finalization, and reports follow the normal study sequence. Each stage displays a developer quick summary for manual QA.
+
+Quick Test records use `studyMode: "quick_test"`; questionnaire and EEG comparison CSV exports include `study_mode`, and each session contains `quick-test-metadata.json`. No synthetic physiological EEG values are created. Use dedicated pseudonymous IDs for testing: the app prevents production and Quick Test data from sharing the same participant record.
+
 Individual session summaries and the participant report show Theta, Beta, and real-time log-TBR with the persisted calibration log-TBR baseline overlaid on the same track. The sound-exposure lanes and adaptive D1/D2 markers use the same fixed 0–10 minute axis. The participant report loads each session's saved recording and applies shared participant-level Y ranges across the two conditions; invalid EEG windows appear as gaps.
 
 Module 01/02 Phase 1 development and test instructions: [docs/MODULE_01_02_PHASE1.md](docs/MODULE_01_02_PHASE1.md).

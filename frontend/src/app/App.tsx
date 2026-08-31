@@ -47,6 +47,7 @@ import {
   finalizeSession,
   loadParticipantRecord,
   saveParticipantRecord,
+  saveQuickTestSessionArtifacts,
   uploadQuestionnaireArtifact,
 } from '../questionnaire/questionnairePersistence.js';
 import type {
@@ -56,11 +57,19 @@ import type {
   StudyCondition,
 } from '../questionnaire/questionnaireSchema.js';
 import { ParticipantComparisonPage } from '../ui/pages/ParticipantComparisonPage.js';
+import {
+  QuickStageSummaryPage,
+  QuickStudySummaryPage,
+  QuickTestStagePage,
+} from '../ui/pages/QuickTestPages.js';
 
 type Page =
   | 'home'
   | 'calibration'
   | 'questionnaire'
+  | 'quick-stage'
+  | 'quick-summary'
+  | 'quick-study-summary'
   | 'artifact-error'
   | 'handoff'
   | 'dashboard'
@@ -80,6 +89,16 @@ export function App() {
   const [questionnaireStage, setQuestionnaireStage] =
     useState<QuestionnaireStage>('calibration_post');
   const [artifactError, setArtifactError] = useState('');
+  const [quickTestMode, setQuickTestMode] = useState(false);
+  const [quickStageKind, setQuickStageKind] = useState<
+    'calibration' | 'session'
+  >('calibration');
+  const [quickSummary, setQuickSummary] = useState<{
+    kind: 'calibration' | 'session';
+    sessionNumber?: 1 | 2;
+  }>({ kind: 'calibration' });
+  const [quickBusy, setQuickBusy] = useState(false);
+  const [quickError, setQuickError] = useState('');
   const pendingStart = useRef<null | (() => Promise<void>)>(null);
   const calibrationProfile = useRef<Profile | null>(null);
   const currentStudySession = useRef<null | {
@@ -446,6 +465,10 @@ export function App() {
   ) => {
     const participantId = profile.participant_id;
     const record = await loadParticipantRecord(participantId);
+    if (record.studyMode === 'quick_test')
+      throw new Error(
+        'This participant ID contains Quick Test data. Use a different participant ID for a production session.',
+      );
     const sessionNumber = (record.conditionOrder.indexOf(condition) + 1) as
       1 | 2;
     const existing = record.sessions.find(
@@ -480,6 +503,101 @@ export function App() {
     setQuestionnaireStage('session_pre');
     setPage('questionnaire');
   };
+  const quickRecord = async (participantId: string) => {
+    const record = await loadParticipantRecord(participantId);
+    const hasStudyData = Boolean(
+      record.calibrationQuestionnaire ||
+      record.sessions.length ||
+      record.finalComparison,
+    );
+    if (hasStudyData && record.studyMode !== 'quick_test')
+      throw new Error(
+        'This participant ID already contains production study data. Use a different test participant ID.',
+      );
+    if (record.studyMode === 'quick_test') return record;
+    return saveParticipantRecord({ ...record, studyMode: 'quick_test' });
+  };
+  const beginQuickCalibration = async (participantId: string) => {
+    const record = await quickRecord(participantId);
+    calibrationProfile.current = null;
+    setStudyRecord(record);
+    setCalibrationIntent({ participantId, durationMinutes: 10 });
+    setQuickStageKind('calibration');
+    setQuickError('');
+    setPage('quick-stage');
+  };
+  const beginProductionCalibration = async (
+    intent: CalibrationSessionIntent,
+  ) => {
+    const record = await loadParticipantRecord(intent.participantId);
+    if (record.studyMode === 'quick_test')
+      throw new Error(
+        'This participant ID contains Quick Test data. Use a different participant ID for a production calibration.',
+      );
+    setCalibrationIntent(intent);
+    setPage('calibration');
+  };
+  const beginQuickSession = async (
+    participantId: string,
+    condition: StudyCondition,
+  ) => {
+    const record = await quickRecord(participantId);
+    if (!record.calibrationQuestionnaire)
+      throw new Error(
+        'Complete the Quick Test calibration questionnaire first.',
+      );
+    const sessionNumber = (record.conditionOrder.indexOf(condition) + 1) as
+      1 | 2;
+    const existing = record.sessions.find(
+      (item) =>
+        item.sessionNumber === sessionNumber &&
+        item.attemptStatus === 'accepted',
+    );
+    if (existing?.sessionDataFinalized)
+      throw new Error(`Session ${sessionNumber} is already complete.`);
+    const sessionId =
+      existing?.sessionId ??
+      `quick-session-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+    currentStudySession.current = {
+      participantId,
+      sessionId,
+      sessionNumber,
+      condition,
+      actualOrder: record.actualOrder,
+    };
+    setStudyRecord(record);
+    pendingStart.current = async () => {
+      setQuickStageKind('session');
+      setQuickError('');
+      setPage('quick-stage');
+    };
+    setQuestionnaireStage('session_pre');
+    setPage('questionnaire');
+  };
+  const completeQuickStage = async () => {
+    setQuickBusy(true);
+    setQuickError('');
+    try {
+      if (quickStageKind === 'calibration') {
+        setQuestionnaireStage('calibration_post');
+        setPage('questionnaire');
+      } else {
+        const context = currentStudySession.current!;
+        await saveQuickTestSessionArtifacts(
+          context.participantId,
+          context.sessionId,
+          context.sessionNumber,
+          context.condition,
+        );
+        setQuestionnaireStage('session_post');
+        setPage('questionnaire');
+      }
+    } catch (error) {
+      setQuickError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setQuickBusy(false);
+    }
+  };
   const submitQuestionnaire = async (submission: QuestionnaireSubmission) => {
     const base =
       studyRecord ?? createParticipantRecord(submission.participantId);
@@ -491,7 +609,10 @@ export function App() {
         calibrationQuestionnaire: submission,
       });
       setStudyRecord(next);
-      setPage('home');
+      if (next.studyMode === 'quick_test') {
+        setQuickSummary({ kind: 'calibration' });
+        setPage('quick-summary');
+      } else setPage('home');
       return;
     }
     if (submission.stage === 'session_pre') {
@@ -512,6 +633,15 @@ export function App() {
         pre: submission,
         sessionDataFinalized: false,
         attemptStatus: 'accepted',
+        ...(base.studyMode === 'quick_test'
+          ? {
+              quickTest: {
+                eegAvailable: false as const,
+                eegStreamSkipped: true as const,
+                sessionDurationSkipped: true as const,
+              },
+            }
+          : {}),
       });
       const next = await saveParticipantRecord({
         ...base,
@@ -555,7 +685,13 @@ export function App() {
           item.sessionDataFinalized &&
           item.attemptStatus === 'accepted',
       );
-      if (
+      if (next.studyMode === 'quick_test') {
+        setQuickSummary({
+          kind: 'session',
+          sessionNumber: context.sessionNumber,
+        });
+        setPage('quick-summary');
+      } else if (
         completed.some((item) => item.condition === 'adaptive') &&
         completed.some((item) => item.condition === 'non-adaptive')
       ) {
@@ -569,14 +705,27 @@ export function App() {
       finalComparison: submission,
     });
     setStudyRecord(next);
-    setPage('handoff');
+    setPage(
+      next.studyMode === 'quick_test' ? 'quick-study-summary' : 'handoff',
+    );
   };
   if (page === 'home')
     return (
       <HomePage
         studyRecord={studyRecord}
         onParticipantRecord={setStudyRecord}
-        onDashboard={() => setPage('dashboard')}
+        onDashboard={() =>
+          setPage(
+            studyRecord?.studyMode === 'quick_test'
+              ? 'quick-study-summary'
+              : 'dashboard',
+          )
+        }
+        quickTestMode={quickTestMode}
+        onQuickTestModeChange={setQuickTestMode}
+        onQuickSession={(participantId, condition) =>
+          beginQuickSession(participantId, condition)
+        }
         onRealTime={(profile, replayFile) =>
           beginStudySession(profile, replayFile, 'adaptive')
         }
@@ -584,9 +733,69 @@ export function App() {
           beginStudySession(profile, replayFile, 'non-adaptive')
         }
         onCalibration={(intent) => {
-          setCalibrationIntent(intent);
-          setPage('calibration');
+          if (quickTestMode)
+            void beginQuickCalibration(intent.participantId).catch((error) =>
+              window.alert(
+                error instanceof Error ? error.message : String(error),
+              ),
+            );
+          else
+            void beginProductionCalibration(intent).catch((error) =>
+              window.alert(
+                error instanceof Error ? error.message : String(error),
+              ),
+            );
         }}
+      />
+    );
+  if (page === 'quick-stage') {
+    const context = currentStudySession.current;
+    return (
+      <QuickTestStagePage
+        kind={quickStageKind}
+        sessionNumber={context?.sessionNumber}
+        condition={context?.condition}
+        busy={quickBusy}
+        error={quickError}
+        onComplete={completeQuickStage}
+      />
+    );
+  }
+  if (page === 'quick-summary' && studyRecord) {
+    return (
+      <QuickStageSummaryPage
+        record={studyRecord}
+        kind={quickSummary.kind}
+        sessionNumber={quickSummary.sessionNumber}
+        onHome={() => setPage('home')}
+        onContinue={() => {
+          if (quickSummary.kind === 'calibration') {
+            setPage('home');
+            return;
+          }
+          const complete = studyRecord.sessions.filter(
+            (item) =>
+              item.post &&
+              item.sessionDataFinalized &&
+              item.attemptStatus === 'accepted',
+          );
+          if (
+            complete.some((item) => item.condition === 'adaptive') &&
+            complete.some((item) => item.condition === 'non-adaptive')
+          ) {
+            setQuestionnaireStage('final_comparison');
+            setPage('questionnaire');
+          } else setPage('home');
+        }}
+      />
+    );
+  }
+  if (page === 'quick-study-summary' && studyRecord)
+    return (
+      <QuickStudySummaryPage
+        record={studyRecord}
+        onHome={() => setPage('home')}
+        onDashboard={() => setPage('dashboard')}
       />
     );
   if (page === 'calibration')

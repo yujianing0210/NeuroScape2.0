@@ -162,10 +162,10 @@ export class AudioEngine {
           const finish = (error?: Error) => {
             if (settled) return;
             settled = true;
-            window.clearTimeout(timeout);
+            globalThis.clearTimeout(timeout);
             error ? reject(error) : resolve();
           };
-          const timeout = window.setTimeout(
+          const timeout = globalThis.setTimeout(
             () =>
               finish(new Error('Browser master-audio recording timed out.')),
             5_000,

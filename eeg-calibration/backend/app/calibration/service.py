@@ -12,7 +12,7 @@ import numpy as np
 
 from app import config
 from app.calibration.machine import CalibrationStateMachine, InvalidTransition
-from app.models.schemas import CalibrationState, EEGSample, Marker, SelfReportSubmit
+from app.models.schemas import CalibrationState, EEGSample, Marker
 from app.osc.receiver import MuseOSCReceiver, local_ipv4
 from app.signal_processing.core import (
     FEATURE_VERSION,
@@ -363,7 +363,17 @@ class CalibrationService:
             block["duration_seconds"] = (
                 marker.monotonic_timestamp - block["start_marker"]["monotonic_timestamp"]
             )
-            self.machine.transition(CalibrationState.SELF_REPORT)
+            block["eeg_quality"] = self._analyze_block(block)
+            block["eligible_for_baseline"] = block["eeg_quality"]["status"] == "pass"
+            self._marker(
+                "BASELINE_ANALYZED",
+                condition=block["condition"],
+                block_number=block["condition_block_number"],
+                block_id=block["block_id"],
+            )
+            self.blocks.append(block)
+            self.current_block = None
+            self._advance_after_block()
             self._persist_protocol()
             return marker
 
@@ -436,35 +446,6 @@ class CalibrationService:
             "epoch_details": [epoch.as_quality_record() for epoch in epochs],
         }
 
-    def submit_self_report(self, report: SelfReportSubmit) -> dict[str, Any]:
-        with self._phase_lock:
-            if self.machine.state != CalibrationState.SELF_REPORT or self.current_block is None:
-                raise InvalidTransition("A completed block is required before self-report submission")
-            block = self.current_block
-            block["self_report"] = report.model_dump()
-            block["eeg_quality"] = self._analyze_block(block)
-            block["eligible_for_baseline"] = block["eeg_quality"]["status"] == "pass"
-            self._marker(
-                "BASELINE_SELF_REPORT_SUBMITTED",
-                condition=block["condition"],
-                block_number=block["condition_block_number"],
-                block_id=block["block_id"],
-            )
-            self.blocks.append(block)
-            self.current_block = None
-            response = {
-                "block_id": block["block_id"],
-                "eeg_quality": {
-                    key: value
-                    for key, value in block["eeg_quality"].items()
-                    if key != "epoch_details"
-                },
-                "eligible_for_baseline": block["eligible_for_baseline"],
-            }
-            self._advance_after_report()
-            self._persist_protocol()
-            return response
-
     def _baseline_evaluation(self) -> dict[str, Any]:
         selected = self.blocks[-1:] if self.blocks else []
         for block in self.blocks:
@@ -485,7 +466,7 @@ class CalibrationService:
             "channel_contributions": quality["channel_contributions"] if quality else {},
         }
 
-    def _advance_after_report(self) -> None:
+    def _advance_after_block(self) -> None:
         if self.pending_tasks:
             self.machine.transition(CalibrationState.BLOCK_READY)
             return
@@ -574,8 +555,8 @@ class CalibrationService:
             "baseline_available": collection_ready and baseline_present,
             "quality_status": "pass" if collection_ready else "fail",
             "quality_issues": quality_issues,
-            "self_reported_focus": selected_blocks[0]["self_report"]["focus"] if selected_blocks else None,
-            "self_reported_drowsiness": selected_blocks[0]["self_report"]["drowsiness"] if selected_blocks else None,
+            "self_reported_focus": None,
+            "self_reported_drowsiness": None,
             "selected_baseline_id": evaluation["selected_baseline_id"],
             "blocks": copy.deepcopy(self.blocks),
             "acclimation_attempts": copy.deepcopy(self.acclimation_attempts),

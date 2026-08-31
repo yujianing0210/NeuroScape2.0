@@ -10,7 +10,7 @@ import {
 } from 'recharts';
 import './calibration.css';
 import { useLive } from './hooks/useLive';
-import { api, type SelfReportPayload } from './services/api';
+import { api } from './services/api';
 import type { Profile, Status } from './types';
 
 const GUIDANCE_URL = '/calibration/calibration_5min.mp3';
@@ -57,34 +57,6 @@ function Shell({
         Single empirical guided-breathing reference
       </footer>
     </div>
-  );
-}
-
-function Rating({
-  label,
-  value,
-  setValue,
-}: {
-  label: string;
-  value: number | null;
-  setValue: (value: number) => void;
-}) {
-  return (
-    <fieldset>
-      <legend>{label}</legend>
-      <div className="rating-row">
-        {[1, 2, 3, 4, 5, 6, 7].map((number) => (
-          <label key={number}>
-            <input
-              type="radio"
-              checked={value === number}
-              onChange={() => setValue(number)}
-            />
-            {number}
-          </label>
-        ))}
-      </div>
-    </fieldset>
   );
 }
 
@@ -226,6 +198,7 @@ export function CalibrationPage({
     'Checking five-minute guidance media…',
   );
   const audioRef = useRef<HTMLAudioElement>(null);
+  const continuedProfileRef = useRef<string | null>(null);
   const hasStatus = status !== null;
 
   useEffect(() => {
@@ -241,6 +214,19 @@ export function CalibrationPage({
         .then(setProfile)
         .catch((reason) => setError(String(reason)));
   }, [status?.state]);
+  useEffect(() => {
+    if (
+      !profile?.ready_to_continue ||
+      !profile.baseline_available ||
+      continuedProfileRef.current === profile.session_id
+    )
+      return;
+    continuedProfileRef.current = profile.session_id;
+    void Promise.resolve(onContinue(profile)).catch((reason) => {
+      continuedProfileRef.current = null;
+      setError(reason instanceof Error ? reason.message : String(reason));
+    });
+  }, [onContinue, profile]);
   useEffect(() => {
     if (!hasStatus) return;
     const audio = audioRef.current;
@@ -302,7 +288,6 @@ export function CalibrationPage({
       </Shell>
     );
 
-  const current = status.protocol.current_block;
   const latestAcclimation = status.protocol.acclimation_attempts.at(-1);
   const startBaseline = async () => {
     const audio = audioRef.current;
@@ -447,12 +432,6 @@ export function CalibrationPage({
         </button>
       </section>
     );
-  else if (status.state === 'SELF_REPORT' && current)
-    content = (
-      <SelfReport
-        submit={(payload) => void act(() => api.submitSelfReport(payload))}
-      />
-    );
   else if (status.state === 'PROCESSING')
     content = (
       <section className="panel">
@@ -486,25 +465,14 @@ export function CalibrationPage({
             label="Packet completeness"
             value={`${(profile.quality.packet_completeness * 100).toFixed(1)}%`}
           />
-          <Metric
-            label="Self-reported focus"
-            value={profile.self_reported_focus ?? '—'}
-          />
-          <Metric
-            label="Self-reported drowsiness"
-            value={profile.self_reported_drowsiness ?? '—'}
-          />
           <Metric label="Quality" value={profile.quality_status} />
         </div>
         {!!profile.quality_issues.length && (
           <p>{profile.quality_issues.join(', ')}</p>
         )}
-        <button
-          disabled={!profile.ready_to_continue || !profile.baseline_available}
-          onClick={() => void onContinue(profile)}
-        >
-          Continue to Participant Reflection
-        </button>
+        {profile.ready_to_continue && profile.baseline_available && (
+          <p>Opening participant reflection…</p>
+        )}
       </section>
     );
   else
@@ -546,60 +514,5 @@ function Metric({ label, value }: { label: string; value: string | number }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
-  );
-}
-
-function SelfReport({
-  submit,
-}: {
-  submit: (payload: SelfReportPayload) => void;
-}) {
-  const [focus, setFocus] = useState<number | null>(null);
-  const [drowsiness, setDrowsiness] = useState<number | null>(null);
-  const [notes, setNotes] = useState('');
-  const [unable, setUnable] = useState(false);
-  return (
-    <section className="panel">
-      <h2>Post-baseline self-report</h2>
-      <p>
-        Ratings are contextual metadata and do not alter or select EEG epochs.
-      </p>
-      <Rating
-        label="During the five-minute breathing practice, how focused did you feel?"
-        value={focus}
-        setValue={setFocus}
-      />
-      <Rating
-        label="During the five-minute breathing practice, how drowsy did you feel?"
-        value={drowsiness}
-        setValue={setDrowsiness}
-      />
-      <label>
-        <input
-          type="checkbox"
-          checked={unable}
-          onChange={(event) => setUnable(event.target.checked)}
-        />{' '}
-        Unable to judge
-      </label>
-      <textarea
-        value={notes}
-        onChange={(event) => setNotes(event.target.value)}
-        placeholder="Investigator notes"
-      />
-      <button
-        disabled={!unable && (focus === null || drowsiness === null)}
-        onClick={() =>
-          submit({
-            focus: unable ? null : focus,
-            drowsiness: unable ? null : drowsiness,
-            investigator_notes: notes,
-            unable_to_judge: unable,
-          })
-        }
-      >
-        Submit Baseline Report
-      </button>
-    </section>
   );
 }

@@ -26,6 +26,7 @@ export function createParticipantRecord(
     schemaVersion: PARTICIPANT_STUDY_SCHEMA_VERSION,
     questionnaireVersion: QUESTIONNAIRE_VERSION,
     participantId,
+    studyMode: 'production',
     createdAtIso: now,
     updatedAtIso: now,
     calibrationCompleted: false,
@@ -55,6 +56,7 @@ export async function loadParticipantRecord(
     (saved.conditionOrder?.[0] === 'adaptive' ? 'BA' : 'AB');
   return {
     ...saved,
+    studyMode: saved.studyMode ?? 'production',
     recommendedOrder,
     actualOrder,
     assignmentSource:
@@ -63,6 +65,94 @@ export async function loadParticipantRecord(
         ? 'participant_id_parity'
         : 'manual_override'),
   };
+}
+
+export async function saveQuickTestSessionArtifacts(
+  participantId: string,
+  sessionId: string,
+  sessionNumber: 1 | 2,
+  condition: StudyCondition,
+): Promise<void> {
+  const createdAtIso = new Date().toISOString();
+  const recording = {
+    metadata: {
+      sessionId,
+      participantId,
+      protocolVersion: 'quick-test',
+      schemaVersion: '1.4',
+      durationMs: 0,
+      startState: 'quick_test',
+      endState: 'ended',
+      eegMode: 'none',
+      runMode: condition === 'non-adaptive' ? 'non-adaptive' : 'mock-fast',
+      plannerMode: condition === 'non-adaptive' ? 'fixed' : 'mock',
+      startedAtIso: createdAtIso,
+      studyMode: 'quick_test',
+      source: 'quick_test',
+      eegAvailable: false,
+      eegStreamSkipped: true,
+    },
+    runtimeSnapshots: [],
+    neuroStates: [],
+    sceneJourneyPlans: [],
+    sessionEvents: [],
+    plannerEvents: [],
+    adaptiveTrace: [],
+    eegMetrics: [],
+    decisionEvents: [],
+    audioPlaybackEvidence: [],
+    audioExecutionDiagnostics: [],
+    appliedAudioExposures: [],
+  };
+  const metadata = {
+    studyMode: 'quick_test',
+    isQuickTest: true,
+    participantId,
+    sessionId,
+    sessionNumber,
+    condition,
+    eegAvailable: false,
+    eegStreamSkipped: true,
+    sessionDurationSkipped: true,
+    audioPlaybackSkipped: true,
+    createdAtIso,
+  };
+  const files = [
+    ['final-session-bundle.json', recording],
+    ['quick-test-metadata.json', metadata],
+    [
+      'manifest.json',
+      {
+        participantId,
+        sessionId,
+        createdAt: createdAtIso,
+        schemaVersion: '1.0',
+        studyMode: 'quick_test',
+        files: [
+          {
+            filename: 'final-session-bundle.json',
+            mimeType: 'application/json',
+          },
+          {
+            filename: 'quick-test-metadata.json',
+            mimeType: 'application/json',
+          },
+        ],
+      },
+    ],
+  ] as const;
+  const prefix = `/api/study/sessions/${encodeURIComponent(participantId)}/${encodeURIComponent(sessionId)}/artifacts`;
+  for (const [filename, value] of files) {
+    const response = await fetch(`${prefix}/${filename}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(value, null, 2),
+    });
+    if (!response.ok)
+      throw new Error(
+        'Quick Test session artifacts could not be saved. Please retry.',
+      );
+  }
 }
 
 export function conditionOrderFor(

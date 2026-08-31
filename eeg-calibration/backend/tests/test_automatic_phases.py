@@ -7,7 +7,7 @@ import pytest
 
 from app import config
 from app.calibration.service import CalibrationService, GUIDED_BASELINE
-from app.models.schemas import CalibrationState, SelfReportSubmit
+from app.models.schemas import CalibrationState
 from app.storage.session_store import SessionStore
 
 
@@ -84,17 +84,32 @@ def test_single_baseline_schedule_and_automatic_timers(tmp_path):
     service.shutdown()
 
 
-def test_report_is_context_only_and_one_failed_attempt_schedules_one_redo(tmp_path, monkeypatch):
+def test_completed_failed_baseline_is_analyzed_and_schedules_one_redo(tmp_path, monkeypatch):
     service = ready_service(tmp_path)
-    service.machine.state = CalibrationState.SELF_REPORT
-    service.pending_tasks = []
-    service.current_block = completed_block([], "invalid")
+    service.machine.state = CalibrationState.BLOCK_READY
+    service.start_block()
     monkeypatch.setattr(service, "_analyze_block", lambda _block: quality([], "invalid"))
-    response = service.submit_self_report(SelfReportSubmit(focus=1, drowsiness=7))
-    assert response["eligible_for_baseline"] is False
+    service._finish_block()
+    assert service.blocks[-1]["eligible_for_baseline"] is False
+    assert service.blocks[-1]["self_report"] is None
     assert len(service.pending_tasks) == 1
     assert service.pending_tasks[0]["is_redo"] is True
     assert service.machine.state == CalibrationState.BLOCK_READY
+    service.shutdown()
+
+
+def test_completed_valid_baseline_processes_without_self_report(tmp_path, monkeypatch):
+    service = ready_service(tmp_path)
+    service.machine.state = CalibrationState.BLOCK_READY
+    service.start_block()
+    values = [1.0] * 25
+    monkeypatch.setattr(service, "_analyze_block", lambda _block: quality(values))
+    service._finish_block()
+    assert service.machine.state == CalibrationState.COMPLETE
+    assert service.result is not None
+    assert service.result["baseline_available"] is True
+    assert service.result["self_reported_focus"] is None
+    assert service.result["self_reported_drowsiness"] is None
     service.shutdown()
 
 

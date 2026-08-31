@@ -11,7 +11,11 @@ import {
   saveParticipantRecord,
   withStudyOrder,
 } from '../../questionnaire/questionnairePersistence.js';
-import type { ParticipantStudyRecord } from '../../questionnaire/questionnaireSchema.js';
+import type {
+  ParticipantSessionRecord,
+  ParticipantStudyRecord,
+  QuestionnaireStage,
+} from '../../questionnaire/questionnaireSchema.js';
 
 export interface CalibrationSessionIntent {
   participantId: string;
@@ -39,6 +43,7 @@ export function HomePage({
   quickTestMode,
   onQuickTestModeChange,
   onQuickSession,
+  onQuestionnaire,
 }: {
   onCalibration: (intent: CalibrationSessionIntent) => void;
   onRealTime: (profile: Profile, replayFile?: File) => void | Promise<void>;
@@ -52,6 +57,10 @@ export function HomePage({
     participantId: string,
     condition: 'adaptive' | 'non-adaptive',
   ) => void | Promise<void>;
+  onQuestionnaire: (
+    stage: QuestionnaireStage,
+    session?: ParticipantSessionRecord,
+  ) => void;
 }) {
   const [participantId, setParticipantId] = useState('P001');
   const [sessions, setSessions] = useState<SavedCalibrationSession[]>([]);
@@ -202,6 +211,14 @@ export function HomePage({
         item.attemptStatus !== 'failed' &&
         item.attemptStatus !== 'excluded',
     ) ?? false;
+  const acceptedSessions = participantRecord?.sessions.filter(
+    (item) =>
+      item.attemptStatus !== 'failed' && item.attemptStatus !== 'excluded',
+  );
+  const finalComparisonAvailable =
+    acceptedSessions?.filter(
+      (item) => item.sessionDataFinalized && Boolean(item.post),
+    ).length === 2;
   const confirmCondition = async (condition: 'adaptive' | 'non-adaptive') => {
     if (!participantRecord || !nextCondition || nextCondition === condition)
       return true;
@@ -320,11 +337,20 @@ export function HomePage({
           <h2>Study Progress</h2>
           <p>
             <span>Calibration</span>
-            <strong>
-              {studyRecord.calibrationQuestionnaire
-                ? 'Complete'
-                : 'Not complete'}
-            </strong>
+            <span className="progress-action">
+              <strong>
+                {studyRecord.calibrationQuestionnaire
+                  ? 'Complete'
+                  : 'Not complete'}
+              </strong>
+              {studyRecord.calibrationCompleted && (
+                <button onClick={() => onQuestionnaire('calibration_post')}>
+                  {studyRecord.calibrationQuestionnaire
+                    ? 'Review / Edit'
+                    : 'Enter questionnaire'}
+                </button>
+              )}
+            </span>
           </p>
           {studyRecord.conditionOrder.map((condition, index) => {
             const session = studyRecord.sessions.find(
@@ -338,19 +364,39 @@ export function HomePage({
                   Session {index + 1} ·{' '}
                   {condition === 'adaptive' ? 'Adaptive' : 'Non-Adaptive'}
                 </span>
-                <strong>
-                  {session?.sessionDataFinalized
-                    ? 'Complete'
-                    : session?.pre
-                      ? 'In progress'
-                      : 'Not started'}
-                </strong>
+                <span className="progress-action">
+                  <strong>
+                    {session?.sessionDataFinalized
+                      ? 'Complete'
+                      : session
+                        ? 'In progress'
+                        : 'Not started'}
+                  </strong>
+                  {session?.sessionDataFinalized && (
+                    <button
+                      onClick={() => onQuestionnaire('session_post', session)}
+                    >
+                      {session.post ? 'Review / Edit' : 'Enter questionnaire'}
+                    </button>
+                  )}
+                </span>
               </p>
             );
           })}
           <p>
             <span>Final comparison</span>
-            <strong>{studyRecord.finalComparison ? 'Complete' : '—'}</strong>
+            <span className="progress-action">
+              <strong>
+                {studyRecord.finalComparison ? 'Complete' : 'Not complete'}
+              </strong>
+              {finalComparisonAvailable && (
+                <button onClick={() => onQuestionnaire('final_comparison')}>
+                  {studyRecord.finalComparison
+                    ? 'Review / Edit'
+                    : 'Enter questionnaire'}
+                </button>
+              )}
+            </span>
           </p>
           {studyRecord.finalComparison && (
             <button onClick={onDashboard}>Open Participant Dashboard</button>

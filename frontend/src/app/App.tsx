@@ -500,8 +500,30 @@ export function App() {
       condition === 'adaptive'
         ? startCalibratedAdaptive(profile, replayFile, sessionId)
         : startNonAdaptive(profile, replayFile, sessionId);
-    setQuestionnaireStage('session_pre');
-    setPage('questionnaire');
+    const sessions = record.sessions
+      .filter((item) => item.sessionId !== sessionId)
+      .map((item) =>
+        item.sessionNumber === sessionNumber &&
+        item.attemptStatus !== 'failed' &&
+        item.attemptStatus !== 'excluded'
+          ? { ...item, attemptStatus: 'excluded' as const }
+          : item,
+      );
+    sessions.push({
+      sessionNumber,
+      sessionId,
+      condition,
+      sessionDataFinalized: false,
+      attemptStatus: 'accepted',
+    });
+    const next = await saveParticipantRecord({
+      ...record,
+      sessions,
+      finalComparison: undefined,
+    });
+    setStudyRecord(next);
+    await pendingStart.current();
+    pendingStart.current = null;
   };
   const quickRecord = async (participantId: string) => {
     const record = await loadParticipantRecord(participantId);
@@ -571,8 +593,35 @@ export function App() {
       setQuickError('');
       setPage('quick-stage');
     };
-    setQuestionnaireStage('session_pre');
-    setPage('questionnaire');
+    const sessions = record.sessions
+      .filter((item) => item.sessionId !== sessionId)
+      .map((item) =>
+        item.sessionNumber === sessionNumber &&
+        item.attemptStatus !== 'failed' &&
+        item.attemptStatus !== 'excluded'
+          ? { ...item, attemptStatus: 'excluded' as const }
+          : item,
+      );
+    sessions.push({
+      sessionNumber,
+      sessionId,
+      condition,
+      sessionDataFinalized: false,
+      attemptStatus: 'accepted',
+      quickTest: {
+        eegAvailable: false,
+        eegStreamSkipped: true,
+        sessionDurationSkipped: true,
+      },
+    });
+    const next = await saveParticipantRecord({
+      ...record,
+      sessions,
+      finalComparison: undefined,
+    });
+    setStudyRecord(next);
+    await pendingStart.current();
+    pendingStart.current = null;
   };
   const completeQuickStage = async () => {
     setQuickBusy(true);
@@ -604,7 +653,8 @@ export function App() {
     if (submission.stage === 'calibration_post') {
       const next = await saveParticipantRecord({
         ...base,
-        calibrationSessionId: calibrationProfile.current?.session_id,
+        calibrationSessionId:
+          calibrationProfile.current?.session_id ?? base.calibrationSessionId,
         calibrationCompleted: true,
         calibrationQuestionnaire: submission,
       });
@@ -658,6 +708,7 @@ export function App() {
       const existing = base.sessions.find(
         (item) => item.sessionId === context.sessionId,
       );
+      const wasEditing = Boolean(existing?.post);
       await uploadQuestionnaireArtifact(submission, existing?.pre);
       const sessions = base.sessions.map((item) =>
         item.sessionId === context.sessionId
@@ -679,6 +730,10 @@ export function App() {
       });
       studyArtifactStore.setBackend({ status: 'saved', directory });
       setStudyRecord(next);
+      if (wasEditing) {
+        setPage('home');
+        return;
+      }
       const completed = next.sessions.filter(
         (item) =>
           item.post &&
@@ -726,6 +781,25 @@ export function App() {
         onQuickSession={(participantId, condition) =>
           beginQuickSession(participantId, condition)
         }
+        onQuestionnaire={(stage, session) => {
+          if (!studyRecord) return;
+          if (session) {
+            currentStudySession.current = {
+              participantId: studyRecord.participantId,
+              sessionId: session.sessionId,
+              sessionNumber: session.sessionNumber,
+              condition: session.condition,
+              actualOrder: studyRecord.actualOrder,
+            };
+          } else currentStudySession.current = null;
+          if (stage === 'calibration_post')
+            setCalibrationIntent((intent) => ({
+              ...intent,
+              participantId: studyRecord.participantId,
+            }));
+          setQuestionnaireStage(stage);
+          setPage('questionnaire');
+        }}
         onRealTime={(profile, replayFile) =>
           beginStudySession(profile, replayFile, 'adaptive')
         }
@@ -824,6 +898,16 @@ export function App() {
     const sessionStage =
       questionnaireStage === 'session_pre' ||
       questionnaireStage === 'session_post';
+    const initialSubmission =
+      questionnaireStage === 'calibration_post'
+        ? studyRecord?.calibrationQuestionnaire
+        : questionnaireStage === 'session_post'
+          ? studyRecord?.sessions.find(
+              (item) => item.sessionId === context?.sessionId,
+            )?.post
+          : questionnaireStage === 'final_comparison'
+            ? studyRecord?.finalComparison
+            : undefined;
     return (
       <QuestionnairePage
         stage={questionnaireStage}
@@ -831,6 +915,7 @@ export function App() {
         sessionId={sessionStage ? context?.sessionId : undefined}
         sessionNumber={sessionStage ? context?.sessionNumber : undefined}
         condition={sessionStage ? context?.condition : undefined}
+        initialSubmission={initialSubmission}
         onSubmit={submitQuestionnaire}
       />
     );

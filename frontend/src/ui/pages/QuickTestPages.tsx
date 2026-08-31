@@ -8,7 +8,23 @@ import {
 const conditionLabel = (condition: StudyCondition) =>
   condition === 'adaptive' ? 'Adaptive' : 'Non-Adaptive';
 const rating = (value: unknown) =>
-  typeof value === 'number' ? `${value} / 7` : '—';
+  typeof value === 'number' ? `${value} / 7` : value === null ? 'N/A' : '—';
+const comparisonLabel = (value: unknown) =>
+  value === 'session1'
+    ? 'Session 1'
+    : value === 'session2'
+      ? 'Session 2'
+      : value === 'no_clear_difference'
+        ? 'No clear difference'
+        : '—';
+const preferenceLabel = (value: unknown) =>
+  value === 'session1'
+    ? 'Session 1'
+    : value === 'session2'
+      ? 'Session 2'
+      : value === 'no_preference'
+        ? 'No preference'
+        : '—';
 export function QuickTestStagePage({
   kind,
   sessionNumber,
@@ -89,7 +105,7 @@ export function QuickStageSummaryPage({
           item.attemptStatus === 'accepted',
       )
     : undefined;
-  const ids = ['Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6'] as const;
+  const ids = ['Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6', 'Q7', 'Q8', 'Q9'] as const;
   return (
     <main className="flow-page quick-test-page">
       <section className="glass-panel quick-test-card">
@@ -127,24 +143,6 @@ export function QuickStageSummaryPage({
               </strong>
             </p>
             <div className="quick-summary-list">
-              <p>
-                <span>Pre-session relaxation</span>
-                <strong>{rating(answerValue(session?.pre, 'M1'))}</strong>
-              </p>
-              <p>
-                <span>Post-session relaxation</span>
-                <strong>{rating(answerValue(session?.post, 'M1'))}</strong>
-              </p>
-              <p>
-                <span>Change</span>
-                <strong>
-                  {typeof answerValue(session?.pre, 'M1') === 'number' &&
-                  typeof answerValue(session?.post, 'M1') === 'number'
-                    ? Number(answerValue(session?.post, 'M1')) -
-                      Number(answerValue(session?.pre, 'M1'))
-                    : '—'}
-                </strong>
-              </p>
               {ids.map((id) => (
                 <p key={id}>
                   <span>{QUESTION_METADATA[id].label}</span>
@@ -194,7 +192,7 @@ export function QuickStudySummaryPage({
         item.sessionNumber === number && item.attemptStatus === 'accepted',
     ),
   );
-  const ids = ['Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6'] as const;
+  const ids = ['Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6', 'Q7', 'Q8', 'Q9'] as const;
   return (
     <main className="flow-page comparison-page quick-study-summary">
       <header className="comparison-header">
@@ -254,38 +252,16 @@ export function QuickStudySummaryPage({
               <th>Metric</th>
               <th>Session 1</th>
               <th>Session 2</th>
-              <th>Difference (S2 − S1)</th>
             </tr>
           </thead>
           <tbody>
-            <tr>
-              <th>M1 Pre</th>
-              <td>{answerValue(sessions[0]?.pre, 'M1') ?? '—'}</td>
-              <td>{answerValue(sessions[1]?.pre, 'M1') ?? '—'}</td>
-              <td>—</td>
-            </tr>
-            <tr>
-              <th>M1 Post</th>
-              <td>{answerValue(sessions[0]?.post, 'M1') ?? '—'}</td>
-              <td>{answerValue(sessions[1]?.post, 'M1') ?? '—'}</td>
-              <td>—</td>
-            </tr>
-            {ids.map((id) => {
-              const a = answerValue(sessions[0]?.post, id),
-                b = answerValue(sessions[1]?.post, id);
-              return (
-                <tr key={id}>
-                  <th>{QUESTION_METADATA[id].label}</th>
-                  <td>{a ?? '—'}</td>
-                  <td>{b ?? '—'}</td>
-                  <td>
-                    {typeof a === 'number' && typeof b === 'number'
-                      ? `${b - a >= 0 ? '+' : ''}${b - a}`
-                      : '—'}
-                  </td>
-                </tr>
-              );
-            })}
+            {ids.map((id) => (
+              <tr key={id}>
+                <th>{QUESTION_METADATA[id].label}</th>
+                <td>{rating(answerValue(sessions[0]?.post, id))}</td>
+                <td>{rating(answerValue(sessions[1]?.post, id))}</td>
+              </tr>
+            ))}
             <tr>
               <th>Comfort issue</th>
               <td>
@@ -298,7 +274,6 @@ export function QuickStudySummaryPage({
                   ? 'Yes'
                   : 'No'}
               </td>
-              <td>—</td>
             </tr>
           </tbody>
         </table>
@@ -307,17 +282,15 @@ export function QuickStudySummaryPage({
         <h2>Final Comparison</h2>
         <div className="quick-summary-list">
           <p>
-            <span>Session 1 responsiveness</span>
-            <strong>{rating(answerValue(record.finalComparison, 'F1'))}</strong>
-          </p>
-          <p>
-            <span>Session 2 responsiveness</span>
-            <strong>{rating(answerValue(record.finalComparison, 'F2'))}</strong>
+            <span>More responsive session</span>
+            <strong>
+              {comparisonLabel(answerValue(record.finalComparison, 'F1'))}
+            </strong>
           </p>
           <p>
             <span>Preferred session</span>
             <strong>
-              {String(answerValue(record.finalComparison, 'F3') ?? '—')}
+              {preferenceLabel(answerValue(record.finalComparison, 'F2'))}
             </strong>
           </p>
         </div>

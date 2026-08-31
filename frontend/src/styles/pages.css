@@ -39,6 +39,15 @@
   border-bottom: 0;
   padding-bottom: 0;
 }
+.progress-action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.8rem;
+}
+.progress-action button {
+  white-space: nowrap;
+}
 .comparison-page {
   justify-content: flex-start;
   align-items: stretch;
@@ -571,6 +580,10 @@
   .study-progress p,
   .study-order-panel p {
     align-items: flex-start;
+  }
+  .progress-action {
+    width: 100%;
+    justify-content: space-between;
   }
 }
 @media (max-width: 560px) {

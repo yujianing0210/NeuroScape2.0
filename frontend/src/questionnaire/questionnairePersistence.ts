@@ -182,6 +182,7 @@ export async function saveParticipantRecord(
 ): Promise<ParticipantStudyRecord> {
   const updated = {
     ...record,
+    questionnaireVersion: QUESTIONNAIRE_VERSION,
     updatedAtIso: new Date().toISOString(),
     questionnaireComplete: Boolean(record.finalComparison),
     status: record.finalComparison
@@ -215,6 +216,26 @@ export async function uploadQuestionnaireArtifact(
     condition: submission.condition,
     pre: pre ?? null,
     post: submission,
+    responses: Object.fromEntries(
+      submission.answers.map((item) => [
+        (
+          {
+            Q1: 'q1_present_attention',
+            Q2: 'q2_mind_wandering',
+            Q3: 'q3_meta_awareness',
+            Q4: 'q4_reorientation',
+            Q5: 'q5_relaxation',
+            Q6: 'q6_spatial_presence',
+            Q7: 'q7_coherence',
+            Q8: 'q8_intrusiveness',
+            Q9: 'q9_helpfulness',
+            COMFORT: 'comfort_issue',
+            COMFORT_TEXT: 'comfort_description',
+          } as Partial<Record<string, string>>
+        )[item.questionId] ?? item.questionId,
+        item.value,
+      ]),
+    ),
   };
   const prefix = `/api/study/sessions/${encodeURIComponent(submission.participantId)}/${encodeURIComponent(submission.sessionId)}/artifacts`;
   const rows = [pre, submission]
@@ -224,7 +245,11 @@ export async function uploadQuestionnaireArtifact(
         item!.stage,
         answer.questionId,
         typeof answer.value === 'number' ? answer.value : '',
-        typeof answer.value === 'number' ? '' : String(answer.value ?? ''),
+        typeof answer.value === 'number'
+          ? ''
+          : answer.value === null
+            ? 'not_applicable'
+            : String(answer.value),
         item!.shownAtIso,
         item!.submittedAtIso,
       ]),

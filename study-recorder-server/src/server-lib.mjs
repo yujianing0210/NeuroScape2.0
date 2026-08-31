@@ -31,6 +31,27 @@ function json(response, status, payload) {
 const csvCell = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`;
 const answer = (submission, id) =>
   submission?.answers?.find((item) => item.questionId === id)?.value ?? null;
+const sessionQuestionnaire = (record, sessionNumber) => {
+  const post = record.sessions.find(
+    (item) =>
+      item.sessionNumber === sessionNumber &&
+      item.attemptStatus !== 'failed' &&
+      item.attemptStatus !== 'excluded',
+  )?.post;
+  return {
+    q1_present_attention: answer(post, 'Q1'),
+    q2_mind_wandering: answer(post, 'Q2'),
+    q3_meta_awareness: answer(post, 'Q3'),
+    q4_reorientation: answer(post, 'Q4'),
+    q5_relaxation: answer(post, 'Q5'),
+    q6_spatial_presence: answer(post, 'Q6'),
+    q7_coherence: answer(post, 'Q7'),
+    q8_intrusiveness: answer(post, 'Q8'),
+    q9_helpfulness: answer(post, 'Q9'),
+    comfort_issue: answer(post, 'COMFORT'),
+    comfort_description: answer(post, 'COMFORT_TEXT'),
+  };
+};
 function participantOutputs(record) {
   const submissions = [
     record.calibrationQuestionnaire,
@@ -41,18 +62,19 @@ function participantOutputs(record) {
     C1: 'calibration_attention',
     C2: 'calibration_mind_wandering',
     C3: 'calibration_relaxation',
-    M1: 'momentary_relaxation',
     Q1: 'present_moment_attention',
     Q2: 'mind_wandering',
-    Q3: 'session_relaxation',
-    Q4: 'spatial_presence',
-    Q5: 'soundscape_coherence',
-    Q6: 'distraction',
+    Q3: 'meta_awareness',
+    Q4: 'attentional_reorientation',
+    Q5: 'relaxation',
+    Q6: 'spatial_presence',
+    Q7: 'soundscape_coherence',
+    Q8: 'intrusiveness',
+    Q9: 'overall_helpfulness',
     COMFORT: 'comfort',
     COMFORT_TEXT: 'comfort_text',
-    F1: 'session_1_responsiveness',
-    F2: 'session_2_responsiveness',
-    F3: 'preference',
+    F1: 'more_responsive_session',
+    F2: 'preferred_session',
   };
   const headers = [
     'participant_id',
@@ -81,7 +103,11 @@ function participantOutputs(record) {
       item.questionId,
       metadata[item.questionId] ?? '',
       typeof item.value === 'number' ? item.value : '',
-      typeof item.value === 'number' ? '' : item.value,
+      typeof item.value === 'number'
+        ? ''
+        : item.value === null
+          ? 'not_applicable'
+          : item.value,
       submission.shownAtIso,
       submission.submittedAtIso,
     ]),
@@ -94,40 +120,24 @@ function participantOutputs(record) {
     (item) =>
       item.attemptStatus !== 'failed' && item.attemptStatus !== 'excluded',
   )) {
-    const preRelaxation = answer(session.pre, 'M1');
-    const postRelaxation = answer(session.post, 'M1');
     conditions[
       session.condition === 'non-adaptive' ? 'nonAdaptive' : 'adaptive'
     ] = {
       sessionId: session.sessionId,
       sessionNumber: session.sessionNumber,
-      momentaryRelaxationPre: preRelaxation,
-      momentaryRelaxationPost: postRelaxation,
-      momentaryRelaxationDelta:
-        typeof preRelaxation === 'number' && typeof postRelaxation === 'number'
-          ? postRelaxation - preRelaxation
-          : null,
       ...Object.fromEntries(
-        ['Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6'].map((id) => [
+        ['Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6', 'Q7', 'Q8', 'Q9'].map((id) => [
           id,
           answer(session.post, id),
         ]),
       ),
       comfort: answer(session.post, 'COMFORT'),
       comfortText: answer(session.post, 'COMFORT_TEXT'),
-      responsiveness: answer(
-        record.finalComparison,
-        session.sessionNumber === 1 ? 'F1' : 'F2',
-      ),
     };
   }
-  const rawPreference = answer(record.finalComparison, 'F3');
+  const rawPreference = answer(record.finalComparison, 'F2');
   const preferredNumber =
-    rawPreference === 'Session 1'
-      ? 1
-      : rawPreference === 'Session 2'
-        ? 2
-        : null;
+    rawPreference === 'session1' ? 1 : rawPreference === 'session2' ? 2 : null;
   return {
     csv,
     report: {
@@ -139,12 +149,17 @@ function participantOutputs(record) {
       actualOrder: record.actualOrder,
       assignmentSource: record.assignmentSource,
       conditionOrder: record.conditionOrder,
-      calibration: Object.fromEntries(
-        ['C1', 'C2', 'C3'].map((id) => [
-          id,
-          answer(record.calibrationQuestionnaire, id),
-        ]),
-      ),
+      calibration: {
+        c1_attention: answer(record.calibrationQuestionnaire, 'C1'),
+        c2_mind_wandering: answer(record.calibrationQuestionnaire, 'C2'),
+        c3_relaxation: answer(record.calibrationQuestionnaire, 'C3'),
+      },
+      session1: sessionQuestionnaire(record, 1),
+      session2: sessionQuestionnaire(record, 2),
+      finalComparison: {
+        more_responsive_session: answer(record.finalComparison, 'F1'),
+        preferred_session: rawPreference,
+      },
       conditions,
       preference: {
         raw: rawPreference,
@@ -494,7 +509,7 @@ export function createStudyServer(options = {}) {
         const record = await readJson(request, 4 * 1024 * 1024);
         if (
           record?.participantId !== participantId ||
-          record?.questionnaireVersion !== '1.1' ||
+          !['1.1', '2.0'].includes(record?.questionnaireVersion) ||
           !Array.isArray(record?.sessions)
         )
           throw new Error('Invalid participant study record.');

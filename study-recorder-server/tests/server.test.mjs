@@ -93,6 +93,21 @@ describe('study recorder server', () => {
           condition: 'non-adaptive',
           sessionDataFinalized: true,
           attemptStatus: 'accepted',
+          post: {
+            questionnaireVersion: '2.0',
+            participantId: 'P007',
+            stage: 'session_post',
+            sessionNumber: 1,
+            sessionId: 'session-1',
+            condition: 'non-adaptive',
+            shownAtIso: '2026-01-01T00:02:00Z',
+            submittedAtIso: '2026-01-01T00:03:00Z',
+            answers: [
+              { questionId: 'Q1', value: 5 },
+              { questionId: 'Q3', value: null },
+              { questionId: 'COMFORT', value: false },
+            ],
+          },
         },
       ],
       questionnaireComplete: false,
@@ -104,6 +119,17 @@ describe('study recorder server', () => {
         shownAtIso: '2026-01-01T00:00:00Z',
         submittedAtIso: '2026-01-01T00:01:00Z',
         answers: [{ questionId: 'C1', value: 5 }],
+      },
+      finalComparison: {
+        questionnaireVersion: '2.0',
+        participantId: 'P007',
+        stage: 'final_comparison',
+        shownAtIso: '2026-01-01T00:04:00Z',
+        submittedAtIso: '2026-01-01T00:05:00Z',
+        answers: [
+          { questionId: 'F1', value: 'no_clear_difference' },
+          { questionId: 'F2', value: 'session1' },
+        ],
       },
     };
     const saved = await fetch(`${base}/api/study/participants/P007/state`, {
@@ -129,13 +155,31 @@ describe('study recorder server', () => {
       ),
     ).toContain('quick_test');
     expect(
+      await readFile(
+        join(resultsRoot, 'P007', 'questionnaire-long.csv'),
+        'utf8',
+      ),
+    ).toContain('not_applicable');
+    expect(
       JSON.parse(
         await readFile(
           join(resultsRoot, 'P007', 'participant-report.json'),
           'utf8',
         ),
-      ).calibration.C1,
+      ).calibration.c1_attention,
     ).toBe(5);
+    const questionnaireReport = JSON.parse(
+      await readFile(
+        join(resultsRoot, 'P007', 'participant-report.json'),
+        'utf8',
+      ),
+    );
+    expect(questionnaireReport.session1.q1_present_attention).toBe(5);
+    expect(questionnaireReport.session1.q3_meta_awareness).toBeNull();
+    expect(questionnaireReport.finalComparison).toEqual({
+      more_responsive_session: 'no_clear_difference',
+      preferred_session: 'session1',
+    });
     expect(
       JSON.parse(
         await readFile(
@@ -168,6 +212,28 @@ describe('study recorder server', () => {
     expect(
       (await fetch(`${base}/api/study/participants/P008/state`)).status,
     ).toBe(204);
+  });
+
+  it('accepts the current questionnaire version for a new Quick Test record', async () => {
+    const resultsRoot = await mkdtemp(
+      join(tmpdir(), 'neuroscape-questionnaire-v2-'),
+    );
+    server = createStudyServer({ resultsRoot });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const response = await fetch(
+      `http://127.0.0.1:${server.address().port}/api/study/participants/P009/state`,
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          participantId: 'P009',
+          questionnaireVersion: '2.0',
+          studyMode: 'quick_test',
+          sessions: [],
+        }),
+      },
+    );
+    expect(response.status).toBe(200);
   });
 
   it('proxies structured LLM requests without exposing the API key', async () => {

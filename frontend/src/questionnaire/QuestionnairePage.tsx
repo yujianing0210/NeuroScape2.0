@@ -38,16 +38,31 @@ const post = [
   ],
   [
     'Q2',
-    'My attention often drifted into thoughts unrelated to the meditation.',
+    'My attention often drifted into thoughts, memories, or plans unrelated to the meditation.',
   ],
-  ['Q3', 'I felt relaxed during the session.'],
-  ['Q4', 'I felt like I was inside the environment created by the sounds.'],
-  ['Q5', 'The sounds seemed to fit together naturally.'],
-  ['Q6', 'The sounds distracted me from the meditation.'],
+  [
+    'Q3',
+    'When my attention began to drift, I was usually able to notice that I was mind wandering.',
+  ],
+  [
+    'Q4',
+    'When I noticed that my attention had drifted, I was able to bring it back to the present meditation experience relatively easily.',
+  ],
+  ['Q5', 'I felt calm and relaxed during the session.'],
+  ['Q6', 'I felt like I was inside the environment created by the sounds.'],
+  ['Q7', 'The sounds seemed to fit together naturally.'],
+  ['Q8', 'The sounds distracted me from the meditation.'],
+  ['Q9', 'Overall, I found the audio helpful for my meditation experience.'],
 ] as const;
-const finalQuestions = [
-  ['F1', 'The sound environment in Session 1 felt responsive to me.'],
-  ['F2', 'The sound environment in Session 2 felt responsive to me.'],
+const comparisonOptions = [
+  ['session1', 'Session 1'],
+  ['session2', 'Session 2'],
+  ['no_clear_difference', 'Unable to compare / No clear difference'],
+] as const;
+const preferenceOptions = [
+  ['session1', 'Session 1'],
+  ['session2', 'Session 2'],
+  ['no_preference', 'No preference'],
 ] as const;
 
 export function QuestionnairePage({
@@ -56,6 +71,7 @@ export function QuestionnairePage({
   sessionNumber,
   sessionId,
   condition,
+  initialSubmission,
   onSubmit,
 }: {
   stage: QuestionnaireStage;
@@ -63,43 +79,63 @@ export function QuestionnairePage({
   sessionNumber?: 1 | 2;
   sessionId?: string;
   condition?: StudyCondition;
+  initialSubmission?: QuestionnaireSubmission;
   onSubmit: (submission: QuestionnaireSubmission) => Promise<void>;
 }) {
   const shownAt = useRef(new Date().toISOString());
-  const [ratings, setRatings] = useState<Partial<Record<QuestionId, number>>>(
-    {},
+  const initialAnswers = new Map(
+    initialSubmission?.answers.map((answer) => [
+      answer.questionId,
+      answer.value,
+    ]),
   );
-  const [comfort, setComfort] = useState<boolean | null>(null);
-  const [comfortText, setComfortText] = useState('');
-  const [preference, setPreference] = useState('');
+  const [ratings, setRatings] = useState<
+    Partial<Record<QuestionId, number | null>>
+  >(() =>
+    Object.fromEntries(
+      [...initialAnswers].filter(
+        ([, value]) => typeof value === 'number' || value === null,
+      ),
+    ),
+  );
+  const [comfort, setComfort] = useState<boolean | null>(() => {
+    const value = initialAnswers.get('COMFORT');
+    return typeof value === 'boolean' ? value : null;
+  });
+  const [comfortText, setComfortText] = useState(() =>
+    String(initialAnswers.get('COMFORT_TEXT') ?? ''),
+  );
+  const [responsiveness, setResponsiveness] = useState(() =>
+    String(initialAnswers.get('F1') ?? ''),
+  );
+  const [preference, setPreference] = useState(() =>
+    String(initialAnswers.get('F2') ?? ''),
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const title =
     stage === 'calibration_post'
       ? 'Calibration Reflection'
-      : stage === 'session_pre'
-        ? `Session ${sessionNumber}`
-        : stage === 'session_post'
-          ? `Session ${sessionNumber} Reflection`
-          : 'Compare the Two Sessions';
-  const requiredIds =
+      : stage === 'session_post'
+        ? `Session ${sessionNumber} Reflection`
+        : 'Compare the Two Sessions';
+  const requiredIds: QuestionId[] =
     stage === 'calibration_post'
       ? ['C1', 'C2', 'C3']
-      : stage === 'session_pre'
-        ? ['M1']
-        : stage === 'session_post'
-          ? ['M1', 'Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6']
-          : ['F1', 'F2'];
+      : stage === 'session_post'
+        ? ['Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6', 'Q7', 'Q8', 'Q9']
+        : [];
   const complete =
-    requiredIds.every((id) => ratings[id as QuestionId]) &&
+    requiredIds.every((id) => Object.hasOwn(ratings, id)) &&
     (stage !== 'session_post' ||
-      (comfort !== null && (!comfort || comfortText.trim()))) &&
-    (stage !== 'final_comparison' || preference);
+      (comfort !== null && (!comfort || Boolean(comfortText.trim())))) &&
+    (stage !== 'final_comparison' || Boolean(responsiveness && preference));
+
   const submit = async () => {
     const answers: QuestionnaireAnswer[] = Object.entries(ratings).map(
       ([questionId, value]) => ({
         questionId: questionId as QuestionId,
-        value: value!,
+        value: value ?? null,
       }),
     );
     if (stage === 'session_post') {
@@ -107,8 +143,10 @@ export function QuestionnairePage({
       if (comfort)
         answers.push({ questionId: 'COMFORT_TEXT', value: comfortText.trim() });
     }
-    if (stage === 'final_comparison')
-      answers.push({ questionId: 'F3', value: preference });
+    if (stage === 'final_comparison') {
+      answers.push({ questionId: 'F1', value: responsiveness });
+      answers.push({ questionId: 'F2', value: preference });
+    }
     const submission: QuestionnaireSubmission = {
       questionnaireVersion: QUESTIONNAIRE_VERSION,
       participantId,
@@ -120,7 +158,11 @@ export function QuestionnairePage({
       submittedAtIso: new Date().toISOString(),
       answers,
     };
-    if (validateSubmission(submission).length) return;
+    const validationErrors = validateSubmission(submission);
+    if (validationErrors.length) {
+      setError(validationErrors.join(' '));
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -130,51 +172,32 @@ export function QuestionnairePage({
       setBusy(false);
     }
   };
+
   return (
     <main className="questionnaire-page">
       <section className="questionnaire-card">
         <p className="flow-brand">NeuroScape</p>
         <h1>{title}</h1>
         {stage === 'calibration_post' && (
-          <p>
-            Please answer based on the five-minute breathing practice you just
-            completed.
-          </p>
-        )}
-        {stage === 'session_pre' && (
           <>
-            <p>Please answer based on how you feel right now.</p>
-            <LikertQuestion
-              question="How relaxed do you feel right now?"
-              value={ratings.M1}
-              onChange={(value) => setRatings({ ...ratings, M1: value })}
-              low="Not at all relaxed"
-              high="Extremely relaxed"
-            />
+            <p>
+              Please answer based on the five-minute breathing practice you just
+              completed.
+            </p>
+            {calibration.map(([id, question, low, high]) => (
+              <LikertQuestion
+                key={id}
+                question={question}
+                value={ratings[id]}
+                onChange={(value) => setRatings({ ...ratings, [id]: value })}
+                low={low}
+                high={high}
+              />
+            ))}
           </>
         )}
-        {stage === 'calibration_post' &&
-          calibration.map(([id, q, low, high]) => (
-            <LikertQuestion
-              key={id}
-              question={q}
-              value={ratings[id]}
-              onChange={(value) => setRatings({ ...ratings, [id]: value })}
-              low={low}
-              high={high}
-            />
-          ))}
         {stage === 'session_post' && (
           <>
-            <p>Please answer based on how you feel right now.</p>
-            <LikertQuestion
-              question="How relaxed do you feel right now?"
-              value={ratings.M1}
-              onChange={(value) => setRatings({ ...ratings, M1: value })}
-              low="Not at all relaxed"
-              high="Extremely relaxed"
-            />
-            <hr />
             <p>
               Thinking about the meditation session you just completed, please
               indicate how much you agree with each statement.
@@ -185,14 +208,15 @@ export function QuestionnairePage({
               you. “Mind wandering” refers to becoming absorbed in thoughts,
               memories, or plans unrelated to the present meditation experience.
             </aside>
-            {post.map(([id, q]) => (
+            {post.map(([id, question]) => (
               <LikertQuestion
                 key={id}
-                question={q}
+                question={question}
                 value={ratings[id]}
                 onChange={(value) => setRatings({ ...ratings, [id]: value })}
                 low="Strongly disagree"
                 high="Strongly agree"
+                allowNotApplicable={id === 'Q3' || id === 'Q4'}
               />
             ))}
             <fieldset className="choice-question">
@@ -227,30 +251,34 @@ export function QuestionnairePage({
         )}
         {stage === 'final_comparison' && (
           <>
-            {finalQuestions.map(([id, q]) => (
-              <LikertQuestion
-                key={id}
-                question={q}
-                value={ratings[id]}
-                onChange={(value) => setRatings({ ...ratings, [id]: value })}
-                low="Strongly disagree"
-                high="Strongly agree"
-              />
-            ))}
+            <fieldset className="choice-question">
+              <legend>Which session felt more responsive to you?</legend>
+              {comparisonOptions.map(([value, label]) => (
+                <label key={value}>
+                  <input
+                    type="radio"
+                    name="responsiveness"
+                    checked={responsiveness === value}
+                    onChange={() => setResponsiveness(value)}
+                  />{' '}
+                  {label}
+                </label>
+              ))}
+            </fieldset>
             <fieldset className="choice-question">
               <legend>
                 If you were to do another meditation session, which of the two
                 would you prefer to use?
               </legend>
-              {['Session 1', 'Session 2', 'No preference'].map((choice) => (
-                <label key={choice}>
+              {preferenceOptions.map(([value, label]) => (
+                <label key={value}>
                   <input
                     type="radio"
                     name="preference"
-                    checked={preference === choice}
-                    onChange={() => setPreference(choice)}
+                    checked={preference === value}
+                    onChange={() => setPreference(value)}
                   />{' '}
-                  {choice}
+                  {label}
                 </label>
               ))}
             </fieldset>

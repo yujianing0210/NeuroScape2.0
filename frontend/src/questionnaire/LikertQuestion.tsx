@@ -4,12 +4,14 @@ export function LikertQuestion({
   onChange,
   low,
   high,
+  allowNotApplicable = false,
 }: {
   question: string;
-  value?: number;
-  onChange: (value: number) => void;
+  value?: number | null;
+  onChange: (value: number | null) => void;
   low: string;
   high: string;
+  allowNotApplicable?: boolean;
 }) {
   return (
     <fieldset className="likert-question">
@@ -33,6 +35,17 @@ export function LikertQuestion({
         <small>1 = {low}</small>
         <small>7 = {high}</small>
       </div>
+      {allowNotApplicable && (
+        <label className="not-applicable-option">
+          <input
+            type="radio"
+            name={question}
+            checked={value === null}
+            onChange={() => onChange(null)}
+          />
+          N/A — I did not experience noticeable mind wandering.
+        </label>
+      )}
     </fieldset>
   );
 }

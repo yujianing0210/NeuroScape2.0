@@ -14,13 +14,18 @@ const submission = (
 ): QuestionnaireSubmission => ({
   questionnaireVersion: QUESTIONNAIRE_VERSION,
   participantId: 'P001',
-  stage: 'session_pre',
+  stage: 'session_post',
   sessionId: 'session-1',
   condition: 'adaptive',
   sessionNumber: 1,
   shownAtIso: '2026-01-01T00:00:00.000Z',
   submittedAtIso: '2026-01-01T00:01:00.000Z',
-  answers: [{ questionId: 'M1', value: 4 }],
+  answers: [
+    ...(['Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6', 'Q7', 'Q8', 'Q9'] as const).map(
+      (questionId) => ({ questionId, value: 4 }),
+    ),
+    { questionId: 'COMFORT', value: false },
+  ],
   ...overrides,
 });
 describe('study order persistence model', () => {
@@ -50,19 +55,27 @@ describe('questionnaire schema', () => {
     expect(validateSubmission(submission())).toEqual([]));
   it('rejects missing and out-of-range Likert values', () => {
     expect(validateSubmission(submission({ answers: [] }))).toContain(
-      'M1 must be rated 1–7.',
+      'Q1 must be rated 1–7.',
     );
     expect(
       validateSubmission(
-        submission({ answers: [{ questionId: 'M1', value: 8 }] }),
+        submission({ answers: [{ questionId: 'Q1', value: 8 }] }),
       ),
-    ).toContain('M1 must be rated 1–7.');
+    ).toContain('Q1 must be rated 1–7.');
+  });
+  it('accepts explicit N/A for Q3 and Q4', () => {
+    const answers = submission().answers.map((item) =>
+      item.questionId === 'Q3' || item.questionId === 'Q4'
+        ? { ...item, value: null }
+        : item,
+    );
+    expect(validateSubmission(submission({ answers }))).toEqual([]);
   });
   it('requires comfort text only after a yes response', () => {
     const post = submission({
       stage: 'session_post',
-      answers: ['M1', 'Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6']
-        .map((questionId) => ({ questionId: questionId as 'M1', value: 4 }))
+      answers: ['Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6', 'Q7', 'Q8', 'Q9']
+        .map((questionId) => ({ questionId: questionId as 'Q1', value: 4 }))
         .concat([{ questionId: 'COMFORT', value: true }]),
     });
     expect(validateSubmission(post)).toContain(
@@ -76,9 +89,8 @@ describe('questionnaire schema', () => {
       condition: null,
       sessionNumber: null,
       answers: [
-        { questionId: 'F1', value: 4 },
-        { questionId: 'F2', value: 5 },
-        { questionId: 'F3', value: 'Adaptive' },
+        { questionId: 'F1', value: 'adaptive' },
+        { questionId: 'F2', value: 'Adaptive' },
       ],
     });
     expect(validateSubmission(final)).toContain(

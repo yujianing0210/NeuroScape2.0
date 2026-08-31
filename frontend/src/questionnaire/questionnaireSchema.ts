@@ -1,4 +1,4 @@
-export const QUESTIONNAIRE_VERSION = '1.1';
+export const QUESTIONNAIRE_VERSION = '2.0';
 export const PARTICIPANT_STUDY_SCHEMA_VERSION = '1.0';
 
 export type StudyCondition = 'adaptive' | 'non-adaptive';
@@ -10,18 +10,19 @@ export type QuestionId =
   | 'C1'
   | 'C2'
   | 'C3'
-  | 'M1'
   | 'Q1'
   | 'Q2'
   | 'Q3'
   | 'Q4'
   | 'Q5'
   | 'Q6'
+  | 'Q7'
+  | 'Q8'
+  | 'Q9'
   | 'COMFORT'
   | 'COMFORT_TEXT'
   | 'F1'
-  | 'F2'
-  | 'F3';
+  | 'F2';
 
 export interface QuestionnaireAnswer {
   questionId: QuestionId;
@@ -96,11 +97,6 @@ export const QUESTION_METADATA: Record<
     label: 'Relaxation',
     direction: 'higher_more',
   },
-  M1: {
-    construct: 'momentary_relaxation',
-    label: 'Momentary Relaxation',
-    direction: 'higher_more',
-  },
   Q1: {
     construct: 'present_moment_attention',
     label: 'Present-Moment Attention',
@@ -112,23 +108,38 @@ export const QUESTION_METADATA: Record<
     direction: 'higher_more',
   },
   Q3: {
-    construct: 'session_relaxation',
-    label: 'Session Relaxation',
+    construct: 'meta_awareness',
+    label: 'Meta-Awareness',
     direction: 'higher_more',
   },
   Q4: {
+    construct: 'attentional_reorientation',
+    label: 'Attentional Reorientation',
+    direction: 'higher_more',
+  },
+  Q5: {
+    construct: 'session_relaxation',
+    label: 'Relaxation',
+    direction: 'higher_more',
+  },
+  Q6: {
     construct: 'spatial_presence',
     label: 'Spatial Presence',
     direction: 'higher_more',
   },
-  Q5: {
+  Q7: {
     construct: 'soundscape_coherence',
     label: 'Soundscape Coherence',
     direction: 'higher_more',
   },
-  Q6: {
-    construct: 'distraction',
-    label: 'Distraction',
+  Q8: {
+    construct: 'intrusiveness',
+    label: 'Intrusiveness',
+    direction: 'higher_more',
+  },
+  Q9: {
+    construct: 'overall_helpfulness',
+    label: 'Overall Helpfulness',
     direction: 'higher_more',
   },
   COMFORT: {
@@ -142,27 +153,22 @@ export const QUESTION_METADATA: Record<
     direction: 'categorical',
   },
   F1: {
-    construct: 'session_1_responsiveness',
-    label: 'Session 1 Responsiveness',
-    direction: 'higher_more',
+    construct: 'more_responsive_session',
+    label: 'More Responsive Session',
+    direction: 'categorical',
   },
   F2: {
-    construct: 'session_2_responsiveness',
-    label: 'Session 2 Responsiveness',
-    direction: 'higher_more',
-  },
-  F3: {
-    construct: 'preference',
-    label: 'Preference',
+    construct: 'preferred_session',
+    label: 'Preferred Session',
     direction: 'categorical',
   },
 };
 
 const LIKERT_BY_STAGE: Record<QuestionnaireStage, QuestionId[]> = {
   calibration_post: ['C1', 'C2', 'C3'],
-  session_pre: ['M1'],
-  session_post: ['M1', 'Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6'],
-  final_comparison: ['F1', 'F2'],
+  session_pre: [],
+  session_post: ['Q1', 'Q2', 'Q5', 'Q6', 'Q7', 'Q8', 'Q9'],
+  final_comparison: [],
 };
 export function validateSubmission(value: QuestionnaireSubmission): string[] {
   const errors: string[] = [];
@@ -179,6 +185,19 @@ export function validateSubmission(value: QuestionnaireSubmission): string[] {
       errors.push(`${id} must be rated 1–7.`);
   }
   if (value.stage === 'session_post') {
+    for (const id of ['Q3', 'Q4'] as const) {
+      const rating = answers.get(id);
+      if (
+        !answers.has(id) ||
+        (rating !== null &&
+          (!Number.isInteger(rating) ||
+            Number(rating) < 1 ||
+            Number(rating) > 7))
+      )
+        errors.push(`${id} must be rated 1–7 or marked N/A.`);
+    }
+  }
+  if (value.stage === 'session_post') {
     if (typeof answers.get('COMFORT') !== 'boolean')
       errors.push('Comfort response is required.');
     if (
@@ -187,13 +206,20 @@ export function validateSubmission(value: QuestionnaireSubmission): string[] {
     )
       errors.push('Comfort description is required.');
   }
-  if (
-    value.stage === 'final_comparison' &&
-    !['Session 1', 'Session 2', 'No preference'].includes(
-      String(answers.get('F3')),
+  if (value.stage === 'final_comparison') {
+    if (
+      !['session1', 'session2', 'no_clear_difference'].includes(
+        String(answers.get('F1')),
+      )
     )
-  )
-    errors.push('A valid preference is required.');
+      errors.push('A valid responsiveness comparison is required.');
+    if (
+      !['session1', 'session2', 'no_preference'].includes(
+        String(answers.get('F2')),
+      )
+    )
+      errors.push('A valid preference is required.');
+  }
   return errors;
 }
 

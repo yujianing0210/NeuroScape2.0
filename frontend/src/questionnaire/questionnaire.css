@@ -65,6 +65,17 @@
   justify-content: space-between;
   color: var(--muted);
 }
+.not-applicable-option {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: fit-content;
+  color: var(--muted);
+  cursor: pointer;
+}
+.not-applicable-option input {
+  accent-color: #8bcf9f;
+}
 .questionnaire-definition {
   padding: 1rem;
   border-left: 3px solid #8bcf9f;

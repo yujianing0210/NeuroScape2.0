@@ -60,27 +60,20 @@ describe('Quick Test developer flow UI', () => {
         number === 1 ? ('non-adaptive' as const) : ('adaptive' as const),
       sessionDataFinalized: true,
       attemptStatus: 'accepted' as const,
-      pre: submission(
-        'session_pre',
-        [{ questionId: 'M1', value: number + 2 }],
-        number as 1 | 2,
-      ),
       post: submission(
         'session_post',
         [
-          { questionId: 'M1', value: number + 3 },
-          ...(['Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6'] as const).map(
-            (questionId) => ({ questionId, value: number + 3 }),
-          ),
+          ...(
+            ['Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6', 'Q7', 'Q8', 'Q9'] as const
+          ).map((questionId) => ({ questionId, value: number + 3 })),
           { questionId: 'COMFORT', value: false },
         ],
         number as 1 | 2,
       ),
     }));
     record.finalComparison = submission('final_comparison', [
-      { questionId: 'F1', value: 4 },
-      { questionId: 'F2', value: 6 },
-      { questionId: 'F3', value: 'Session 2' },
+      { questionId: 'F1', value: 'session2' },
+      { questionId: 'F2', value: 'session2' },
     ]);
     record.questionnaireComplete = true;
     const html = renderToStaticMarkup(
@@ -93,7 +86,7 @@ describe('Quick Test developer flow UI', () => {
     expect(html).toContain('Session 1 vs Session 2');
     expect(html).toContain('Non-Adaptive');
     expect(html).toContain('Adaptive');
-    expect(html).toContain('Difference (S2 − S1)');
+    expect(html).toContain('Overall Helpfulness');
     expect(html).toContain('Session 2');
   });
 });

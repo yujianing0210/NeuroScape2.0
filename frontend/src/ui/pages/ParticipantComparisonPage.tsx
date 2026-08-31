@@ -14,7 +14,17 @@ import {
 const conditionLabel = (value: StudyCondition) =>
   value === 'adaptive' ? 'Adaptive' : 'Non-Adaptive';
 const score = (value: unknown) =>
-  typeof value === 'number' ? `${value} / 7` : '—';
+  typeof value === 'number' ? `${value} / 7` : value === null ? 'N/A' : '—';
+const sessionChoiceLabel = (value: unknown) =>
+  value === 'session1'
+    ? 'Session 1'
+    : value === 'session2'
+      ? 'Session 2'
+      : value === 'no_clear_difference'
+        ? 'No clear difference'
+        : value === 'no_preference'
+          ? 'No preference'
+          : '—';
 export function ParticipantComparisonPage({
   record,
   onHome,
@@ -28,30 +38,39 @@ export function ParticipantComparisonPage({
   );
   const adaptive = accepted.find((item) => item.condition === 'adaptive');
   const control = accepted.find((item) => item.condition === 'non-adaptive');
+  const session1 = accepted.find((item) => item.sessionNumber === 1);
+  const session2 = accepted.find((item) => item.sessionNumber === 2);
   const complete = Boolean(
     adaptive?.post && control?.post && record.finalComparison,
   );
-  const responsiveness = (condition: StudyCondition) => {
-    const session = accepted.find((item) => item.condition === condition);
-    return answerValue(
-      record.finalComparison,
-      session?.sessionNumber === 1 ? 'F1' : 'F2',
-    );
-  };
-  const pref = answerValue(record.finalComparison, 'F3');
+  const responsive = answerValue(record.finalComparison, 'F1');
+  const pref = answerValue(record.finalComparison, 'F2');
   const preferredNumber =
-    pref === 'Session 1' ? 1 : pref === 'Session 2' ? 2 : null;
+    pref === 'session1' ? 1 : pref === 'session2' ? 2 : null;
   const mapped = preferredNumber
     ? accepted.find((item) => item.sessionNumber === preferredNumber)?.condition
     : null;
-  const comparisons = ['Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6'] as const;
+  const comparisons = [
+    'Q1',
+    'Q2',
+    'Q3',
+    'Q4',
+    'Q5',
+    'Q6',
+    'Q7',
+    'Q8',
+    'Q9',
+  ] as const;
   const differences = comparisons
     .map((id) => ({
       id,
-      a: Number(answerValue(adaptive?.post, id)),
-      n: Number(answerValue(control?.post, id)),
+      a: answerValue(adaptive?.post, id),
+      n: answerValue(control?.post, id),
     }))
-    .filter((item) => Number.isFinite(item.a) && Number.isFinite(item.n))
+    .filter(
+      (item): item is typeof item & { a: number; n: number } =>
+        typeof item.a === 'number' && typeof item.n === 'number',
+    )
     .sort((a, b) => Math.abs(b.a - b.n) - Math.abs(a.a - a.n))
     .slice(0, 3);
   const [recordings, setRecordings] = useState<Record<string, RecordedSession>>(
@@ -151,40 +170,9 @@ export function ParticipantComparisonPage({
         </article>
       </section>
       <section className="glass-panel comparison-table">
-        <h2>Momentary Relaxation</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Condition</th>
-              <th>Pre</th>
-              <th>Post</th>
-              <th>Δ</th>
-            </tr>
-          </thead>
-          <tbody>
-            {[adaptive, control].map(
-              (session) =>
-                session && (
-                  <tr key={session.condition}>
-                    <th>{conditionLabel(session.condition)}</th>
-                    <td>{answerValue(session.pre, 'M1') ?? '—'}</td>
-                    <td>{answerValue(session.post, 'M1') ?? '—'}</td>
-                    <td>
-                      {typeof answerValue(session.pre, 'M1') === 'number' &&
-                      typeof answerValue(session.post, 'M1') === 'number'
-                        ? `${Number(answerValue(session.post, 'M1')) - Number(answerValue(session.pre, 'M1')) >= 0 ? '+' : ''}${Number(answerValue(session.post, 'M1')) - Number(answerValue(session.pre, 'M1'))}`
-                        : '—'}
-                    </td>
-                  </tr>
-                ),
-            )}
-          </tbody>
-        </table>
-      </section>
-      <section className="glass-panel comparison-table">
         <h2>Core Session Self-Report</h2>
         <p>
-          Raw 1–7 responses are shown. Lower Mind Wandering and Distraction
+          Raw 1–7 responses are shown. Lower Mind Wandering and Intrusiveness
           indicate less reported wandering/distraction; values are not
           reverse-scored here.
         </p>
@@ -192,8 +180,8 @@ export function ParticipantComparisonPage({
           <thead>
             <tr>
               <th>Item</th>
-              <th>Non-Adaptive</th>
-              <th>Adaptive</th>
+              <th>Session 1</th>
+              <th>Session 2</th>
             </tr>
           </thead>
           <tbody>
@@ -201,10 +189,10 @@ export function ParticipantComparisonPage({
               <tr key={id}>
                 <th>
                   {QUESTION_METADATA[id].label}
-                  {(id === 'Q2' || id === 'Q6') && <small> lower = less</small>}
+                  {(id === 'Q2' || id === 'Q8') && <small> lower = less</small>}
                 </th>
-                <td>{answerValue(control?.post, id) ?? '—'}</td>
-                <td>{answerValue(adaptive?.post, id) ?? '—'}</td>
+                <td>{score(answerValue(session1?.post, id))}</td>
+                <td>{score(answerValue(session2?.post, id))}</td>
               </tr>
             ))}
           </tbody>
@@ -214,19 +202,15 @@ export function ParticipantComparisonPage({
         <article className="glass-panel">
           <h2>Perceived Responsiveness</h2>
           <p>
-            <span>Adaptive</span>
-            <strong>{score(responsiveness('adaptive'))}</strong>
-          </p>
-          <p>
-            <span>Non-Adaptive</span>
-            <strong>{score(responsiveness('non-adaptive'))}</strong>
+            <span>More responsive session</span>
+            <strong>{sessionChoiceLabel(responsive)}</strong>
           </p>
         </article>
         <article className="glass-panel">
           <h2>Preference</h2>
           <p>
             {pref
-              ? `${pref}${mapped ? ` → ${conditionLabel(mapped)}` : ''}`
+              ? `${sessionChoiceLabel(pref)}${mapped ? ` → ${conditionLabel(mapped)}` : ''}`
               : '—'}
           </p>
         </article>

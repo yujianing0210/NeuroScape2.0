@@ -2,9 +2,6 @@ export type State =
   | 'IDLE'
   | 'CONNECTION_CHECK'
   | 'READY'
-  | 'ACCLIMATION'
-  | 'ACCLIMATION_COMPLETE'
-  | 'BLOCK_READY'
   | 'BLOCK_RECORDING'
   | 'PROCESSING'
   | 'COMPLETE'
@@ -74,7 +71,6 @@ export interface Status {
   waveform: WavePoint[];
   markers: { event: string; session_elapsed_seconds: number }[];
   timing: {
-    acclimation_duration_seconds: number;
     baseline_duration_seconds: number;
     active_elapsed_seconds: number;
     active_remaining_seconds: number;
@@ -86,13 +82,6 @@ export interface Status {
     next_block: BaselineTask | null;
     current_block: CalibrationBlock | null;
     completed_blocks: CalibrationBlock[];
-    acclimation_attempts: Array<{
-      attempt: number;
-      completed_automatically: boolean;
-      accepted: boolean | null;
-    }>;
-    current_acclimation: { attempt: number } | null;
-    redos_planned: boolean;
     collection_decision: string;
   };
   processing_stage?: string;
@@ -111,7 +100,7 @@ export interface Profile {
   valid_epoch_count: number;
   invalid_epoch_count: number;
   baseline_available: boolean;
-  collection_decision: 'ready_to_continue' | 'insufficient_after_redo';
+  collection_decision: 'ready_to_continue' | 'insufficient_single_session';
   ready_to_continue: boolean;
   quality_status: 'pass' | 'fail';
   quality_issues: string[];

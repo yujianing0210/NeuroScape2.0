@@ -143,19 +143,3 @@ def test_incompatible_feature_version_is_rejected():
     with pytest.raises(IncompatibleCalibrationProfile, match="Incompatible calibration profile. Please recalibrate."):
         validate_calibration_profile({"feature_version": "raw_welch_frontal_log_tbr_mean_blink_tolerance_v3"})
 
-
-class SilentReceiver:
-    osc_callback = None
-    eeg_callback = None
-
-    def status(self):
-        return {"connected": False, "headband_on": None, "real_data_seconds": 0.0, "hsi": {"AF7": None, "AF8": None}}
-
-
-def test_acclimation_cannot_start_without_real_eeg(tmp_path):
-    service = CalibrationService(store=SessionStore(tmp_path), receiver=SilentReceiver())
-    service.machine.transition(CalibrationState.CONNECTION_CHECK)
-    service.machine.transition(CalibrationState.READY)
-    with pytest.raises(ValueError, match="Real EEG"):
-        service.start_acclimation()
-    service.store.close()

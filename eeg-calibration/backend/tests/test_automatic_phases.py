@@ -74,33 +74,27 @@ def completed_block(values, status="pass", block_id="baseline_1"):
 def test_single_baseline_schedule_and_automatic_timers(tmp_path):
     service = ready_service(tmp_path)
     assert [task["condition"] for task in service.original_schedule] == [GUIDED_BASELINE]
-    service.start_acclimation()
-    assert ManualTimer.instances[0].interval == config.ACCLIMATION_SECONDS == 60
-    ManualTimer.instances[0].fire()
-    service.accept_acclimation()
     start = service.start_block()
     assert start.event == "BASELINE_START"
-    assert ManualTimer.instances[1].interval == config.BASELINE_SECONDS == 300
+    assert ManualTimer.instances[0].interval == config.BASELINE_SECONDS == 300
     service.shutdown()
 
 
-def test_completed_failed_baseline_is_analyzed_and_schedules_one_redo(tmp_path, monkeypatch):
+def test_completed_failed_baseline_finishes_without_redo(tmp_path, monkeypatch):
     service = ready_service(tmp_path)
-    service.machine.state = CalibrationState.BLOCK_READY
     service.start_block()
     monkeypatch.setattr(service, "_analyze_block", lambda _block: quality([], "invalid"))
     service._finish_block()
     assert service.blocks[-1]["eligible_for_baseline"] is False
     assert service.blocks[-1]["self_report"] is None
-    assert len(service.pending_tasks) == 1
-    assert service.pending_tasks[0]["is_redo"] is True
-    assert service.machine.state == CalibrationState.BLOCK_READY
+    assert service.pending_tasks == []
+    assert service.machine.state == CalibrationState.COMPLETE
+    assert service.result["collection_decision"] == "insufficient_single_session"
     service.shutdown()
 
 
 def test_completed_valid_baseline_processes_without_self_report(tmp_path, monkeypatch):
     service = ready_service(tmp_path)
-    service.machine.state = CalibrationState.BLOCK_READY
     service.start_block()
     values = [1.0] * 25
     monkeypatch.setattr(service, "_analyze_block", lambda _block: quality(values))
@@ -127,19 +121,19 @@ def test_valid_baseline_generates_v5_median_mad_profile(tmp_path):
     service.shutdown()
 
 
-def test_second_failed_attempt_finishes_with_unusable_profile(tmp_path):
+def test_single_failed_attempt_finishes_with_unusable_profile(tmp_path):
     service = ready_service(tmp_path)
-    service.blocks = [completed_block([], "invalid", "baseline_1"), completed_block([], "invalid", "baseline_2")]
+    service.blocks = [completed_block([], "invalid", "baseline_1")]
     profile = service._process()
     assert profile["quality_status"] == "fail"
     assert profile["baseline_available"] is False
-    assert profile["collection_decision"] == "insufficient_after_redo"
+    assert profile["collection_decision"] == "insufficient_single_session"
     service.shutdown()
 
 
 def test_reset_cancels_active_timer(tmp_path):
     service = ready_service(tmp_path)
-    service.start_acclimation()
+    service.start_block()
     timer = ManualTimer.instances[0]
     service.reset()
     assert timer.cancelled and service.machine.state == CalibrationState.IDLE

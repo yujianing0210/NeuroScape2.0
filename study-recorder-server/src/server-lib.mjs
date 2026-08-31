@@ -149,6 +149,7 @@ function participantOutputs(record) {
       actualOrder: record.actualOrder,
       assignmentSource: record.assignmentSource,
       conditionOrder: record.conditionOrder,
+      calibrationSessionId: record.calibrationSessionId ?? null,
       calibration: {
         c1_attention: answer(record.calibrationQuestionnaire, 'C1'),
         c2_mind_wandering: answer(record.calibrationQuestionnaire, 'C2'),

@@ -47,20 +47,6 @@ export const api = {
     request<Record<string, unknown>>('/connection/test', {
       method: 'POST',
     }),
-  startAcclimation: (qualityOverride: boolean) =>
-    request(
-      '/calibration/acclimation/start',
-      startPayload(qualityOverride),
-    ),
-  endAcclimationEarly: () =>
-    request('/calibration/acclimation/end-early', { method: 'POST' }),
-  acceptAcclimation: () =>
-    request('/calibration/acclimation/accept', { method: 'POST' }),
-  repeatAcclimation: (qualityOverride: boolean) =>
-    request(
-      '/calibration/acclimation/repeat',
-      startPayload(qualityOverride),
-    ),
   startBaseline: (qualityOverride: boolean) =>
     request('/calibration/baseline/start', startPayload(qualityOverride)),
   endBaselineEarly: () =>

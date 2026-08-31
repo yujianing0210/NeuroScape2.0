@@ -56,51 +56,12 @@ async def test_connection() -> dict:
     return await service.connection_test()
 
 
-@app.post("/api/calibration/acclimation/start")
-def start_acclimation(payload: CalibrationStart = CalibrationStart()) -> dict:
-    try:
-        return service.start_acclimation(payload.quality_override).model_dump()
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-
-@app.post("/api/calibration/acclimation/end-early")
-def end_acclimation_early() -> dict:
-    return service.end_acclimation_early().model_dump()
-
-
-@app.post("/api/calibration/acclimation/accept")
-def accept_acclimation() -> dict:
-    try:
-        return service.accept_acclimation().model_dump()
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-
-@app.post("/api/calibration/acclimation/repeat")
-def repeat_acclimation(payload: CalibrationStart = CalibrationStart()) -> dict:
-    try:
-        return service.repeat_acclimation(payload.quality_override).model_dump()
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-
-@app.post("/api/calibration/block/start")
-def start_block(payload: CalibrationStart = CalibrationStart()) -> dict:
+@app.post("/api/calibration/baseline/start")
+def start_baseline(payload: CalibrationStart = CalibrationStart()) -> dict:
     try:
         return service.start_block(payload.quality_override).model_dump()
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-
-
-@app.post("/api/calibration/baseline/start")
-def start_baseline(payload: CalibrationStart = CalibrationStart()) -> dict:
-    return start_block(payload)
-
-
-@app.post("/api/calibration/block/end-early")
-def end_block_early() -> dict:
-    return service.end_block_early().model_dump()
 
 
 @app.post("/api/calibration/baseline/end-early")

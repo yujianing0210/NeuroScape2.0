@@ -47,10 +47,7 @@ class CalibrationService:
         self.original_schedule: list[dict[str, Any]] = []
         self.pending_tasks: list[dict[str, Any]] = []
         self.blocks: list[dict[str, Any]] = []
-        self.acclimation_attempts: list[dict[str, Any]] = []
         self.current_block: dict[str, Any] | None = None
-        self.current_acclimation: dict[str, Any] | None = None
-        self.redos_planned = False
         self.collection_decision = "not_started"
         self._timer_factory = timer_factory
         self._active_timer: Any | None = None
@@ -85,16 +82,16 @@ class CalibrationService:
             self.store.writer.put_eeg(sample)
 
     @staticmethod
-    def _baseline_task(*, redo: bool = False, redo_reason: list[str] | None = None) -> dict[str, Any]:
+    def _baseline_task() -> dict[str, Any]:
         return {
-            "task_id": "guided_breathing_baseline_redo" if redo else GUIDED_BASELINE,
-            "sequence_number": 2 if redo else 1,
+            "task_id": GUIDED_BASELINE,
+            "sequence_number": 1,
             "condition": GUIDED_BASELINE,
             "condition_label": GUIDED_BASELINE_LABEL,
-            "condition_block_number": 2 if redo else 1,
-            "is_redo": redo,
-            "redo_of_block_id": "baseline_1" if redo else None,
-            "redo_reason": redo_reason,
+            "condition_block_number": 1,
+            "is_redo": False,
+            "redo_of_block_id": None,
+            "redo_reason": None,
         }
 
     def create_session(self, participant_id: str) -> dict:
@@ -121,10 +118,7 @@ class CalibrationService:
         self.original_schedule = [self._baseline_task()]
         self.pending_tasks = copy.deepcopy(self.original_schedule)
         self.blocks = []
-        self.acclimation_attempts = []
         self.current_block = None
-        self.current_acclimation = None
-        self.redos_planned = False
         self.collection_decision = "not_started"
         self.machine.transition(CalibrationState.CONNECTION_CHECK)
         self._persist_protocol()
@@ -219,95 +213,10 @@ class CalibrationService:
             poor_hsi_override_channels=sorted(existing_channels),
         )
 
-    def start_acclimation(self, quality_override: bool = False) -> Marker:
-        with self._phase_lock:
-            if self.machine.state != CalibrationState.READY:
-                raise InvalidTransition("A successful connection test is required before acclimation")
-            return self._begin_acclimation(quality_override)
-
-    def repeat_acclimation(self, quality_override: bool = False) -> Marker:
-        with self._phase_lock:
-            if self.machine.state != CalibrationState.ACCLIMATION_COMPLETE:
-                raise InvalidTransition("Acclimation can only be repeated after an attempt ends")
-            if self.acclimation_attempts:
-                self.acclimation_attempts[-1]["accepted"] = False
-                self.acclimation_attempts[-1]["review_reason"] = "investigator_requested_repeat"
-            return self._begin_acclimation(quality_override)
-
-    def _begin_acclimation(self, quality_override: bool) -> Marker:
-        poor = self._validate_recording_signal(quality_override)
-        self._record_quality_override(quality_override, poor)
-        self.machine.transition(CalibrationState.ACCLIMATION)
-        attempt = len(self.acclimation_attempts) + 1
-        marker = self._marker("ACCLIMATION_START", attempt=attempt)
-        blink_event_start_count = int(self.receiver.status().get("blink_events_session", 0))
-        self.current_acclimation = {
-            "attempt": attempt,
-            "start_marker": marker.model_dump(),
-            "blink_event_start_count": blink_event_start_count,
-            "blink_event_count": None,
-            "end_marker": None,
-            "completed_automatically": None,
-            "accepted": None,
-            "review_reason": None,
-            "quality_at_end": None,
-        }
-        self.collection_decision = "in_progress"
-        self._active_timer = self._schedule(config.ACCLIMATION_SECONDS, self._finish_acclimation)
-        self._persist_protocol()
-        return marker
-
-    def _finish_acclimation(self, automatic: bool = True) -> Marker | None:
-        with self._phase_lock:
-            if self.machine.state != CalibrationState.ACCLIMATION or self.current_acclimation is None:
-                return None
-            if not automatic and self._active_timer is not None:
-                self._active_timer.cancel()
-            self._active_timer = None
-            attempt = self.current_acclimation["attempt"]
-            marker = self._marker(
-                "ACCLIMATION_END",
-                attempt=attempt,
-                completed_automatically=automatic,
-                reason=None if automatic else "ended_early",
-            )
-            self.current_acclimation["end_marker"] = marker.model_dump()
-            self.current_acclimation["completed_automatically"] = automatic
-            blink_event_end_count = int(self.receiver.status().get("blink_events_session", 0))
-            self.current_acclimation["blink_event_count"] = max(
-                0, blink_event_end_count - self.current_acclimation["blink_event_start_count"]
-            )
-            self.current_acclimation["quality_at_end"] = self._quality_snapshot()
-            self.acclimation_attempts.append(self.current_acclimation)
-            self.current_acclimation = None
-            self.machine.transition(CalibrationState.ACCLIMATION_COMPLETE)
-            self._persist_protocol()
-            return marker
-
-    def end_acclimation_early(self) -> Marker:
-        marker = self._finish_acclimation(False)
-        if marker is None:
-            raise InvalidTransition("No acclimation attempt is recording")
-        return marker
-
-    def accept_acclimation(self) -> Marker:
-        with self._phase_lock:
-            if self.machine.state != CalibrationState.ACCLIMATION_COMPLETE or not self.acclimation_attempts:
-                raise InvalidTransition("A completed acclimation attempt is required")
-            attempt = self.acclimation_attempts[-1]
-            if not attempt["completed_automatically"]:
-                raise ValueError("An early-ended acclimation cannot be accepted; repeat the full 60 seconds")
-            attempt["accepted"] = True
-            attempt["review_reason"] = "investigator_accepted"
-            marker = self._marker("ACCLIMATION_ACCEPTED", attempt=attempt["attempt"])
-            self.machine.transition(CalibrationState.BLOCK_READY)
-            self._persist_protocol()
-            return marker
-
     def start_block(self, quality_override: bool = False) -> Marker:
         with self._phase_lock:
-            if self.machine.state != CalibrationState.BLOCK_READY or not self.pending_tasks:
-                raise InvalidTransition("No calibration block is ready to start")
+            if self.machine.state != CalibrationState.READY or not self.pending_tasks:
+                raise InvalidTransition("The single calibration session is not ready to start")
             poor = self._validate_recording_signal(quality_override)
             self._record_quality_override(quality_override, poor)
             task = self.pending_tasks.pop(0)
@@ -467,21 +376,6 @@ class CalibrationService:
         }
 
     def _advance_after_block(self) -> None:
-        if self.pending_tasks:
-            self.machine.transition(CalibrationState.BLOCK_READY)
-            return
-        evaluation = self._baseline_evaluation()
-        if not self.redos_planned:
-            self.redos_planned = True
-            if evaluation["status"] != "pass":
-                self.pending_tasks.append(
-                    self._baseline_task(redo=True, redo_reason=evaluation["issues"])
-                )
-            if self.pending_tasks:
-                self.collection_decision = "redo_required"
-                self._marker("BASELINE_REDO_REQUIRED", reason=",".join(evaluation["issues"]))
-                self.machine.transition(CalibrationState.BLOCK_READY)
-                return
         self.machine.transition(CalibrationState.PROCESSING)
         try:
             self._process()
@@ -497,7 +391,7 @@ class CalibrationService:
         evaluation = self._baseline_evaluation()
         collection_ready = evaluation["status"] == "pass"
         self.collection_decision = (
-            "ready_to_continue" if collection_ready else "insufficient_after_redo"
+            "ready_to_continue" if collection_ready else "insufficient_single_session"
         )
         self.processing_stage = "baseline_calculation"
         summary = baseline_summary(evaluation["epoch_tbrs"])
@@ -529,12 +423,11 @@ class CalibrationService:
                 "duration_seconds": config.BASELINE_SECONDS,
                 "expected_epochs": config.EXPECTED_BASELINE_EPOCHS,
                 "minimum_valid_epochs": config.MIN_VALID_BASELINE_EPOCHS,
-                "maximum_redos": config.MAX_BASELINE_REDOS,
+                "maximum_redos": 0,
                 "aggregation": "valid_epoch_median",
             },
             "baseline_summary": evaluation,
             "blocks": copy.deepcopy(self.blocks),
-            "acclimation_attempts": copy.deepcopy(self.acclimation_attempts),
         }
         self.processing_stage = "profile_generation"
         profile = {
@@ -559,11 +452,10 @@ class CalibrationService:
             "self_reported_drowsiness": None,
             "selected_baseline_id": evaluation["selected_baseline_id"],
             "blocks": copy.deepcopy(self.blocks),
-            "acclimation_attempts": copy.deepcopy(self.acclimation_attempts),
             "quality": {
                 key: value
                 for key, value in quality.items()
-                if key not in {"blocks", "acclimation_attempts"}
+                if key != "blocks"
             },
         }
         validate_calibration_profile(profile)
@@ -607,9 +499,6 @@ class CalibrationService:
             "next_block": copy.deepcopy(self.pending_tasks[0]) if self.pending_tasks else None,
             "current_block": current,
             "completed_blocks": blocks,
-            "acclimation_attempts": copy.deepcopy(self.acclimation_attempts),
-            "current_acclimation": copy.deepcopy(self.current_acclimation),
-            "redos_planned": self.redos_planned,
             "collection_decision": self.collection_decision,
         }
 
@@ -731,10 +620,7 @@ class CalibrationService:
             self.original_schedule = []
             self.pending_tasks = []
             self.blocks = []
-            self.acclimation_attempts = []
             self.current_block = None
-            self.current_acclimation = None
-            self.redos_planned = False
             self.collection_decision = "not_started"
 
     def status(self, include_waveform: bool = True) -> dict:
@@ -744,15 +630,11 @@ class CalibrationService:
             markers = list(self.markers)
             active_start = None
             active_duration = 0.0
-            if self.machine.state == CalibrationState.ACCLIMATION and self.current_acclimation:
-                active_start = self.current_acclimation["start_marker"]["monotonic_timestamp"]
-                active_duration = float(config.ACCLIMATION_SECONDS)
-            elif self.machine.state == CalibrationState.BLOCK_RECORDING and self.current_block:
+            if self.machine.state == CalibrationState.BLOCK_RECORDING and self.current_block:
                 active_start = self.current_block["start_marker"]["monotonic_timestamp"]
                 active_duration = float(config.BASELINE_SECONDS)
             elapsed = max(0.0, time.monotonic() - active_start) if active_start else 0.0
             timing = {
-                "acclimation_duration_seconds": float(config.ACCLIMATION_SECONDS),
                 "baseline_duration_seconds": float(config.BASELINE_SECONDS),
                 "active_elapsed_seconds": min(active_duration, elapsed),
                 "active_remaining_seconds": max(0.0, active_duration - elapsed),
@@ -764,12 +646,7 @@ class CalibrationService:
             session_blink_events = int(receiver.get("blink_events_session", 0))
             blink_event_count: int | None = None
             blink_event_label: str | None = None
-            if self.current_acclimation is not None:
-                blink_event_count = max(
-                    0, session_blink_events - self.current_acclimation["blink_event_start_count"]
-                )
-                blink_event_label = f"Acclimation {self.current_acclimation['attempt']}"
-            elif self.current_block is not None:
+            if self.current_block is not None:
                 stored_count = self.current_block.get("blink_event_count")
                 blink_event_count = (
                     max(0, session_blink_events - self.current_block["blink_event_start_count"])
@@ -777,10 +654,6 @@ class CalibrationService:
                     else int(stored_count)
                 )
                 blink_event_label = self.current_block["condition_label"]
-            elif self.machine.state == CalibrationState.ACCLIMATION_COMPLETE and self.acclimation_attempts:
-                latest_acclimation = self.acclimation_attempts[-1]
-                blink_event_count = int(latest_acclimation.get("blink_event_count") or 0)
-                blink_event_label = f"Acclimation {latest_acclimation['attempt']}"
             elif self.blocks:
                 latest_block = self.blocks[-1]
                 blink_event_count = int(latest_block.get("blink_event_count") or 0)

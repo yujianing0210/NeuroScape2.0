@@ -18,9 +18,6 @@ def test_valid_protocol_state_machine_progression():
     for state in (
         CalibrationState.CONNECTION_CHECK,
         CalibrationState.READY,
-        CalibrationState.ACCLIMATION,
-        CalibrationState.ACCLIMATION_COMPLETE,
-        CalibrationState.BLOCK_READY,
         CalibrationState.BLOCK_RECORDING,
         CalibrationState.PROCESSING,
         CalibrationState.COMPLETE,

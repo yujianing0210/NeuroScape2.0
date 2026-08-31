@@ -189,19 +189,24 @@ export async function saveParticipantRecord(
       ? ('complete' as const)
       : ('incomplete' as const),
   };
-  const response = await fetch(
-    `/api/study/participants/${encodeURIComponent(record.participantId)}/state`,
-    {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(updated),
-    },
+  const url = `/api/study/participants/${encodeURIComponent(record.participantId)}/state`;
+  const body = JSON.stringify(updated);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (response.ok) return updated;
+    } catch {
+      // A participant-state PUT is idempotent, so one retry is safe.
+    }
+  }
+  throw new Error(
+    'Your responses could not be saved after two attempts. Check that the local study recorder is running, then retry.',
   );
-  if (!response.ok)
-    throw new Error(
-      'Your responses could not be saved. Please ask the researcher to retry.',
-    );
-  return updated;
 }
 export async function uploadQuestionnaireArtifact(
   submission: QuestionnaireSubmission,

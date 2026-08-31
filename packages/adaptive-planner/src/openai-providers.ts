@@ -149,6 +149,8 @@ export function buildDecision1Prompt(context: DecisionContext): string {
     'Provide a concise, inspectable rationale based only on supplied observations. Do not claim objective mind-wandering detection and do not expose hidden chain-of-thought.',
     `INPUT_JSON=${JSON.stringify({
       baselineReference: {
+        calibrationSessionId: context.profile.profileId,
+        sourcePolicy: 'single_five_minute_guided_calibration_only',
         baselineLogTbr: context.profile.baselineLogTbr,
         baselineMad: context.profile.baselineMad,
         effectiveBaselineScale: context.profile.effectiveBaselineScale,

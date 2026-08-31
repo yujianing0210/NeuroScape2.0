@@ -11,16 +11,8 @@ class CalibrationStateMachine:
     _valid = {
         CalibrationState.IDLE: {CalibrationState.CONNECTION_CHECK},
         CalibrationState.CONNECTION_CHECK: {CalibrationState.READY, CalibrationState.IDLE},
-        CalibrationState.READY: {CalibrationState.ACCLIMATION, CalibrationState.IDLE},
-        CalibrationState.ACCLIMATION: {CalibrationState.ACCLIMATION_COMPLETE, CalibrationState.IDLE},
-        CalibrationState.ACCLIMATION_COMPLETE: {
-            CalibrationState.ACCLIMATION,
-            CalibrationState.BLOCK_READY,
-            CalibrationState.IDLE,
-        },
-        CalibrationState.BLOCK_READY: {CalibrationState.BLOCK_RECORDING, CalibrationState.IDLE},
+        CalibrationState.READY: {CalibrationState.BLOCK_RECORDING, CalibrationState.IDLE},
         CalibrationState.BLOCK_RECORDING: {
-            CalibrationState.BLOCK_READY,
             CalibrationState.PROCESSING,
             CalibrationState.IDLE,
         },

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   QUESTIONNAIRE_VERSION,
   validateSubmission,
@@ -6,8 +6,36 @@ import {
 } from '../src/questionnaire/questionnaireSchema.js';
 import {
   createParticipantRecord,
+  saveParticipantRecord,
   withStudyOrder,
 } from '../src/questionnaire/questionnairePersistence.js';
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe('participant state persistence', () => {
+  it('retries one transient request failure and completes', async () => {
+    const fetcher = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('proxy connection reset'))
+      .mockResolvedValueOnce({ ok: true });
+    vi.stubGlobal('fetch', fetcher);
+
+    const saved = await saveParticipantRecord(createParticipantRecord('P013'));
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(saved.participantId).toBe('P013');
+  });
+
+  it('stops after two failed attempts instead of waiting forever', async () => {
+    const fetcher = vi.fn().mockRejectedValue(new TypeError('offline'));
+    vi.stubGlobal('fetch', fetcher);
+
+    await expect(
+      saveParticipantRecord(createParticipantRecord('P013')),
+    ).rejects.toThrow('after two attempts');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+});
 
 const submission = (
   overrides: Partial<QuestionnaireSubmission> = {},

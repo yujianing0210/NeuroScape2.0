@@ -469,6 +469,13 @@ export function App() {
       throw new Error(
         'This participant ID contains Quick Test data. Use a different participant ID for a production session.',
       );
+    if (
+      record.calibrationSessionId &&
+      record.calibrationSessionId !== profile.session_id
+    )
+      throw new Error(
+        `This participant is bound to calibration ${record.calibrationSessionId}. Select that same calibration for every study condition.`,
+      );
     const sessionNumber = (record.conditionOrder.indexOf(condition) + 1) as
       1 | 2;
     const existing = record.sessions.find(

@@ -288,7 +288,6 @@ export function CalibrationPage({
       </Shell>
     );
 
-  const latestAcclimation = status.protocol.acclimation_attempts.at(-1);
   const startBaseline = async () => {
     const audio = audioRef.current;
     if (!audio || mediaStatus !== 'ready')
@@ -350,55 +349,11 @@ export function CalibrationPage({
   else if (status.state === 'READY')
     content = (
       <section className="panel">
-        <p className="eyebrow">STEP 2 · ACCLIMATION</p>
-        <h2>One-minute acclimation</h2>
-        <p>These samples are stored but never enter the guided baseline.</p>
-        <button
-          disabled={busy}
-          onClick={() => void act(() => api.startAcclimation(false))}
-        >
-          Start Acclimation · 1:00
-        </button>
-      </section>
-    );
-  else if (status.state === 'ACCLIMATION')
-    content = (
-      <section className="panel">
-        <h2>Acclimation recording</h2>
-        <div className="active-timer">
-          {timer(status.timing.active_remaining_seconds)}
-        </div>
-        <button
-          className="danger ghost"
-          onClick={() => void act(api.endAcclimationEarly)}
-        >
-          End Early
-        </button>
-      </section>
-    );
-  else if (status.state === 'ACCLIMATION_COMPLETE')
-    content = (
-      <section className="panel">
-        <h2>Review acclimation</h2>
-        <button
-          disabled={busy || !latestAcclimation?.completed_automatically}
-          onClick={() => void act(api.acceptAcclimation)}
-        >
-          Accept Full Acclimation
-        </button>
-        <button onClick={() => void act(() => api.repeatAcclimation(false))}>
-          Repeat Acclimation
-        </button>
-      </section>
-    );
-  else if (status.state === 'BLOCK_READY')
-    content = (
-      <section className="panel">
-        <p className="eyebrow">STEP 3 · GUIDED BASELINE</p>
+        <p className="eyebrow">STEP 2 · GUIDED BASELINE</p>
         <h2>Single five-minute guided-breathing baseline</h2>
         <p>
-          This is an empirical reference, not maximum focus or a physiological
-          bound.
+          This one session is the sole baseline reference for every subsequent
+          study condition and LLM interpretation.
         </p>
         <div className={`alert ${mediaStatus === 'ready' ? '' : 'warning'}`}>
           <strong>Guidance preflight: {mediaStatus}</strong>

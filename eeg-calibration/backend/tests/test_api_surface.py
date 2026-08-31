@@ -9,17 +9,13 @@ from app.main import app
 from app.models.schemas import EEGSample
 
 
-def test_calibration_api_surface_omits_retired_self_report():
+def test_calibration_api_surface_exposes_only_single_baseline_flow():
     paths = app.openapi()["paths"]
-    expected = {
-        "/api/calibration/acclimation/start",
-        "/api/calibration/acclimation/end-early",
-        "/api/calibration/acclimation/accept",
-        "/api/calibration/acclimation/repeat",
-        "/api/calibration/block/start",
-        "/api/calibration/block/end-early",
-    }
+    expected = {"/api/calibration/baseline/start", "/api/calibration/baseline/end-early"}
     assert expected <= paths.keys()
+    assert not any("acclimation" in path for path in paths)
+    assert "/api/calibration/block/start" not in paths
+    assert "/api/calibration/block/end-early" not in paths
     assert "/api/calibration/self-report" not in paths
     assert "/api/calibration/relaxation/start" not in paths
     assert "/api/calibration/focus/start" not in paths

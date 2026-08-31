@@ -66,18 +66,18 @@ describe('experienced-adaptation cooldown', () => {
     ).toBe(true);
   });
 
-  it('allows a second scene transition after 120 seconds but never more than two or during closing', () => {
+  it('allows a second scene transition after 90 seconds but never more than two or during closing', () => {
     const transition = {
       ...historyItem(240_000),
       timestampMs: 240_000,
       scope: 'scene-transition' as const,
     };
     expect(
-      restrictionsFor(stateAt(359_999), [transition], phase1Config)
+      restrictionsFor(stateAt(329_999), [transition], phase1Config)
         .allowSceneTransition,
     ).toBe(false);
     expect(
-      restrictionsFor(stateAt(360_000), [transition], phase1Config)
+      restrictionsFor(stateAt(330_000), [transition], phase1Config)
         .allowSceneTransition,
     ).toBe(true);
     expect(

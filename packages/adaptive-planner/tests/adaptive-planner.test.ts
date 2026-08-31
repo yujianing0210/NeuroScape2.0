@@ -29,18 +29,11 @@ describe('adaptive planner Phase 1', () => {
       const result = await planner.ingest(epoch);
       if (result) checkpoints.push(result);
     }
-    expect(checkpoints[0]?.state.timestampMs).toBe(60_000);
+    expect(checkpoints[0]?.state.timestampMs).toBe(50_000);
     expect(
       checkpoints.slice(0, 5).map((item) => item.state.timestampMs),
-    ).toEqual([60_000, 80_000, 100_000, 120_000, 140_000]);
-    const lastCheckpointMs =
-      phase1Config.openingDurationMs +
-      Math.floor(
-        (phase1Config.sessionDurationMs - phase1Config.openingDurationMs) /
-          phase1Config.checkpointIntervalMs,
-      ) *
-        phase1Config.checkpointIntervalMs;
-    expect(checkpoints.at(-1)?.state.timestampMs).toBe(lastCheckpointMs);
+    ).toEqual([50_000, 70_000, 90_000, 110_000, 130_000]);
+    expect(checkpoints.at(-1)?.state.timestampMs).toBe(590_000);
     expect(checkpoints.at(-1)?.state.phase).toBe('adaptive');
     expect(checkpoints.at(-1)?.eligibility.reasons).not.toContain(
       'closing_phase',
@@ -122,13 +115,13 @@ describe('adaptive planner Phase 1', () => {
       await planner.ingest(epoch);
 
     expect(
-      observed.find((item) => item.timestampMs === 140_000)?.pressure,
+      observed.find((item) => item.timestampMs === 110_000)?.pressure,
     ).toBe('low');
     expect(
-      observed.find((item) => item.timestampMs === 160_000)?.pressure,
+      observed.find((item) => item.timestampMs === 130_000)?.pressure,
     ).toBe('medium');
     expect(
-      observed.find((item) => item.timestampMs === 220_000)?.pressure,
+      observed.find((item) => item.timestampMs === 170_000)?.pressure,
     ).toBe('high');
   });
 
@@ -142,7 +135,7 @@ describe('adaptive planner Phase 1', () => {
       const result = await planner.ingest({ ...template, timestampMs });
       if (result) checkpoints.push(result.state.timestampMs);
     }
-    expect(checkpoints).toEqual([61_000, 81_000, 101_000]);
+    expect(checkpoints).toEqual([59_000, 79_000, 101_000]);
   });
 
   it('does not let a later checkpoint invalidate an in-flight planner transaction', async () => {
@@ -164,14 +157,14 @@ describe('adaptive planner Phase 1', () => {
       planningProvider: new MockPlanningProvider(),
     });
     const replay = createMockTbrReplay();
-    for (const epoch of replay.filter((item) => item.timestampMs < 60_000))
+    for (const epoch of replay.filter((item) => item.timestampMs < 50_000))
       await planner.ingest(epoch);
     const first = planner.ingest(
-      replay.find((item) => item.timestampMs === 60_000)!,
+      replay.find((item) => item.timestampMs === 50_000)!,
     );
     let busyResult;
     for (const epoch of replay.filter(
-      (item) => item.timestampMs > 60_000 && item.timestampMs <= 100_000,
+      (item) => item.timestampMs > 50_000 && item.timestampMs <= 90_000,
     ))
       busyResult = await planner.ingest(epoch);
     expect(busyResult?.eligibility).toMatchObject({

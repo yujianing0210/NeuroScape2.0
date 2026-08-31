@@ -49,7 +49,7 @@ export interface AdaptivePlannerConfig {
  */
 export const phase1Config: AdaptivePlannerConfig = Object.freeze({
   sessionDurationMs: 600_000,
-  openingDurationMs: 60_000,
+  openingDurationMs: 45_000,
   epochDurationMs: 10_000,
   analysisWindowMs: 60_000,
   // Decision 1/2 reasoning cadence requested for the live adaptive session.
@@ -65,15 +65,15 @@ export const phase1Config: AdaptivePlannerConfig = Object.freeze({
   sustainedWindowCount: 2,
   minimumConfidence: 0.6,
   adaptationCooldownMs: 5_000,
-  sceneTransitionCooldownMs: 120_000,
+  sceneTransitionCooldownMs: 90_000,
   maxSceneTransitions: 2,
   exactAssetCooldownMs: 90_000,
   assetFamilyCooldownMs: 45_000,
   bodyAnchorCooldownMs: 80_000,
   maxMeaningfulStasisMs: 80_000,
-  progressionPressureMediumMs: 100_000,
-  progressionPressureHighMs: 160_000,
-  destinationStabilizationMinMs: 45_000,
+  progressionPressureMediumMs: 70_000,
+  progressionPressureHighMs: 110_000,
+  destinationStabilizationMinMs: 30_000,
   // TBD_PILOT: receding-horizon, latency, and restrained-complexity policy.
   patchHorizonMs: 120_000,
   // Minimal lead time for deterministic validation/plan handoff. Runtime's

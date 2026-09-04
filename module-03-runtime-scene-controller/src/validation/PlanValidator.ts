@@ -392,6 +392,17 @@ function validatePlaybackPolicy(
       errors.push(`${path}.perRepeatGain length must equal repeatCount.`);
   }
   if (
+    value.spreadAcrossLifecycle !== undefined &&
+    typeof value.spreadAcrossLifecycle !== 'boolean'
+  )
+    errors.push(`${path}.spreadAcrossLifecycle must be boolean.`);
+  if (
+    value.spreadAcrossLifecycle === true &&
+    value.mode !== 'repeat' &&
+    value.mode !== 'repeat-count'
+  )
+    errors.push(`${path}.spreadAcrossLifecycle requires repeat mode.`);
+  if (
     (value.mode === 'repeat' || value.mode === 'repeat-count') &&
     (value.repeatCount === undefined ||
       value.repeatGapMs === undefined ||

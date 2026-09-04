@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { audioLibrary } from '../src/index.js';
+import { audioLibrary, resolveAudioEnvelope } from '../src/index.js';
 import type { NeuroState, RuntimeWorldState } from '../src/index.js';
 
 describe('shared contracts', () => {
@@ -83,5 +83,70 @@ describe('shared contracts', () => {
     expect(byId.get('body_slow_breath_01')?.asset_ref).toBe(
       'common/action/body_slow_breath_01.wav',
     );
+  });
+
+  it('resolves canonical short and environmental envelopes from authored metadata', () => {
+    expect(
+      resolveAudioEnvelope('forest_bird_far_01', {
+        role: 'event',
+        durationMs: 6_000,
+        fallbackDurationMs: 5_000,
+      }),
+    ).toMatchObject({ fadeInMs: 500, fadeOutMs: 1_500, source: 'authored' });
+    expect(
+      resolveAudioEnvelope('forest_soft_owl_far_01', {
+        role: 'event',
+        durationMs: 16_600,
+        fallbackDurationMs: 5_000,
+      }),
+    ).toMatchObject({ fadeInMs: 400, fadeOutMs: 1_000 });
+    expect(
+      resolveAudioEnvelope('stream_lakeside_river', {
+        role: 'ambient',
+        fallbackDurationMs: 1_000,
+      }),
+    ).toMatchObject({ fadeInMs: 2_000, fadeOutMs: 2_000 });
+    expect(
+      resolveAudioEnvelope('ocean_waves_soft_01', {
+        role: 'ambient',
+        fallbackDurationMs: 1_000,
+      }),
+    ).toMatchObject({ fadeInMs: 4_000, fadeOutMs: 4_000 });
+  });
+
+  it('proportionally clamps long authored fades while preserving a plateau', () => {
+    expect(
+      resolveAudioEnvelope('forest_water_drop_far_01', {
+        role: 'event',
+        durationMs: 16_823,
+        fallbackDurationMs: 1_000,
+      }),
+    ).toMatchObject({ fadeInMs: 6_000, fadeOutMs: 6_000 });
+    const envelope = resolveAudioEnvelope('forest_water_drop_far_01', {
+      role: 'event',
+      durationMs: 8_000,
+      fallbackDurationMs: 1_000,
+    });
+    expect(envelope.fadeInMs).toBeCloseTo(2_500);
+    expect(envelope.fadeOutMs).toBeCloseTo(2_500);
+    expect(envelope.minimumPlateauMs).toBe(3_000);
+    expect(envelope.fadeInMs + envelope.fadeOutMs).toBeLessThanOrEqual(
+      8_000 - envelope.minimumPlateauMs,
+    );
+  });
+
+  it('keeps compatibility IDs on the existing transition fallback without NaN timing', () => {
+    expect(
+      resolveAudioEnvelope('ambient.test-alias', {
+        role: 'ambient',
+        durationMs: 1_000,
+        fallbackDurationMs: 2_000,
+      }),
+    ).toEqual({
+      fadeInMs: 250,
+      fadeOutMs: 250,
+      minimumPlateauMs: 500,
+      source: 'transition-fallback',
+    });
   });
 });

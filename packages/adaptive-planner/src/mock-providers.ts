@@ -12,6 +12,7 @@ import type {
   PlanningProvider,
   PlanningResult,
 } from './types.js';
+import { resolveEventMotionPlayback } from './event-motion-resolver.js';
 
 export interface SoundAssetKnowledge {
   assetId: string;
@@ -42,39 +43,45 @@ export interface SoundAssetKnowledge {
 
 export const phase1SoundKnowledge: readonly SoundAssetKnowledge[] =
   Object.freeze(
-    audioLibrary.filter((asset) => asset.planner_eligible !== false).map((asset) => ({
-      assetId: asset.asset_id,
-      family: asset.asset_id.replace(/_\d+$/, ''),
-      label: asset.label,
-      layer: (asset.layer === 'action' ? 'body-anchor' : asset.layer) as
-        'ambient' | 'event' | 'body-anchor',
-      description: asset.description,
-      scenes: [...asset.scene],
-      tags: [...asset.tags],
-      loop: asset.loop,
-      intensity: asset.intensity,
-      suddenness: asset.suddenness,
-      recommendedDistance: asset.recommended_distance,
-      useWhen: [...asset.use_when],
-      avoidWhen: [...asset.avoid_when],
-      spatialBehavior: [...asset.spatial_behavior],
-      defaultPosition: [...asset.default_position] as [number, number, number],
-      defaultMotionType: asset.default_motion.type,
-      motionDurationMs:
-        asset.default_motion.duration === undefined
-          ? null
-          : asset.default_motion.duration * 1_000,
-      autoDeleteAfterMs:
-        asset.auto_delete_after_sec === null
-          ? null
-          : asset.auto_delete_after_sec * 1_000,
-      recommendedVolume: asset.recommended_volume,
-      fadeInMs: asset.fade_in_sec * 1_000,
-      fadeOutMs: asset.fade_out_sec * 1_000,
-      priority: asset.priority,
-      isPrimaryAmbient: asset.is_primary_ambient,
-      isRareEvent: asset.is_rare_event,
-    })),
+    audioLibrary
+      .filter((asset) => asset.planner_eligible !== false)
+      .map((asset) => ({
+        assetId: asset.asset_id,
+        family: asset.asset_id.replace(/_\d+$/, ''),
+        label: asset.label,
+        layer: (asset.layer === 'action' ? 'body-anchor' : asset.layer) as
+          'ambient' | 'event' | 'body-anchor',
+        description: asset.description,
+        scenes: [...asset.scene],
+        tags: [...asset.tags],
+        loop: asset.loop,
+        intensity: asset.intensity,
+        suddenness: asset.suddenness,
+        recommendedDistance: asset.recommended_distance,
+        useWhen: [...asset.use_when],
+        avoidWhen: [...asset.avoid_when],
+        spatialBehavior: [...asset.spatial_behavior],
+        defaultPosition: [...asset.default_position] as [
+          number,
+          number,
+          number,
+        ],
+        defaultMotionType: asset.default_motion.type,
+        motionDurationMs:
+          asset.default_motion.duration === undefined
+            ? null
+            : asset.default_motion.duration * 1_000,
+        autoDeleteAfterMs:
+          asset.auto_delete_after_sec === null
+            ? null
+            : asset.auto_delete_after_sec * 1_000,
+        recommendedVolume: asset.recommended_volume,
+        fadeInMs: asset.fade_in_sec * 1_000,
+        fadeOutMs: asset.fade_out_sec * 1_000,
+        priority: asset.priority,
+        isPrimaryAmbient: asset.is_primary_ambient,
+        isRareEvent: asset.is_rare_event,
+      })),
   );
 
 export class MockDecisionProvider implements DecisionProvider {
@@ -85,10 +92,7 @@ export class MockDecisionProvider implements DecisionProvider {
       trajectory: state.trajectory,
       confidence: state.measurementConfidence,
     };
-    if (
-      context.stasisPressure &&
-      state.baselineRelation !== 'tbr-elevated'
-    ) {
+    if (context.stasisPressure && state.baselineRelation !== 'tbr-elevated') {
       return {
         decision: 'adapt',
         intent: 'support_sustained_focus',
@@ -356,55 +360,27 @@ export class MockPlanningProvider implements PlanningProvider {
       );
     }
     const assetId = candidate.assetId;
-    const durationMs = Math.round(
-      (candidate.defaultMotion.durationSec ??
-        candidate.autoDeleteAfterSec ??
-        6) * 1_000,
-    );
-    const currentLocation =
-      context.currentPlan.userJourney.waypoints.at(-1)?.locationId ??
-      'clearing';
-    const moving = candidate.defaultMotion.type !== 'none';
+    const eventId = candidate.activeElementId ?? `event-${now}`;
+    const asset = audioLibrary.find((item) => item.asset_id === assetId);
+    if (!asset)
+      throw new Error(`Missing canonical event metadata for ${assetId}.`);
+    const resolved = resolveEventMotionPlayback(asset, {
+      elementId: eventId,
+      gain: candidate.recommendedVolume,
+    });
+    const durationMs = resolved.durationMs;
     const event: EventPlanItem = {
-      id: candidate.activeElementId ?? `event-${now}`,
+      id: eventId,
       assetId,
       activationTimeMs: now + 2_000,
       durationMs,
-      trajectory: moving
-        ? [
-            { locationId: 'forest_entry', timestampMs: now + 2_000 },
-            {
-              locationId: currentLocation,
-              timestampMs: now + 2_000 + durationMs,
-            },
-          ]
-        : [{ locationId: currentLocation, timestampMs: now + 2_000 }],
+      motion: resolved.motion,
       gain: candidate.recommendedVolume,
-      interpolation: moving ? 'smoothstep' : 'linear',
+      interpolation:
+        resolved.motion.motionMode === 'stationary' ? 'linear' : 'smoothstep',
       trajectoryUpdatePolicy: 'replace-at-effective-time',
-      distancePolicy: { mode: 'none' },
-      playback: (() => {
-        const contract = audioLibrary.find(
-          (asset) => asset.asset_id === assetId,
-        )?.playback_contract;
-        if (contract?.mode === 'burst') {
-          const repeatCount = contract.repeat_count_options[0] ?? 1;
-          return {
-            mode: 'repeat' as const,
-            durationPolicy: 'truncate-at-end' as const,
-            repeatCount,
-            repeatGapMs: contract.inter_repeat_gap_sec * 1_000,
-            perRepeatGain: Array.from(
-              { length: repeatCount },
-              () => candidate.recommendedVolume,
-            ),
-          };
-        }
-        return {
-          mode: 'once' as const,
-          durationPolicy: 'truncate-at-end' as const,
-        };
-      })(),
+      distancePolicy: resolved.distancePolicy ?? { mode: 'none' },
+      playback: resolved.playback,
     };
     return {
       patch: {

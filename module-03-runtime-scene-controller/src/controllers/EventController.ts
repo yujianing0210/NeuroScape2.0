@@ -2,9 +2,11 @@ import type {
   EventPlanItem,
   EventState,
   ListenerState,
+  ResolvedAudioEnvelope,
   TransitionPolicy,
   Vector3,
 } from '@neuroscape/contracts';
+import { resolveAudioEnvelope } from '@neuroscape/contracts';
 import {
   EPSILON,
   plannedDistanceGain,
@@ -37,16 +39,11 @@ interface EventRuntimeObject {
   transitionKey: string;
   removalScheduled: boolean;
   finishedPublished: boolean;
+  envelope: ResolvedAudioEnvelope;
   replacement?: EventPlanItem;
   runtimeActivationMs?: number;
   runtimeFinishedMs?: number;
 }
-
-export const SHORT_EVENT_ENVELOPE = Object.freeze({
-  fadeInMs: 750,
-  fadeOutMs: 1_000,
-  minimumAudiblePlateauMs: 3_000,
-}); // TBD_PILOT
 
 export class EventController {
   readonly #objects = new Map<string, EventRuntimeObject>();
@@ -73,7 +70,6 @@ export class EventController {
   merge(items: readonly EventPlanItem[], policy: TransitionPolicy): void {
     this.#policy = policy;
     const incoming = new Map(items.map((item) => [item.id, item]));
-    const replacements: EventPlanItem[] = [];
     for (const object of this.#objects.values()) {
       const item = incoming.get(object.id);
       if (!item) {
@@ -82,16 +78,13 @@ export class EventController {
       }
       incoming.delete(item.id);
       if (object.assetId !== item.assetId) {
-        this.#objects.delete(object.id);
-        this.transitions.release(object.transitionKey);
-        replacements.push(item);
+        object.replacement = structuredClone(item);
+        this.beginRemoval(object);
         continue;
       }
       this.mergeCompatible(object, item);
     }
-    [...incoming.values(), ...replacements].forEach((item) =>
-      this.create(item),
-    );
+    incoming.forEach((item) => this.create(item));
   }
 
   update(deltaTimeMs: number, _listener: ListenerState): void {
@@ -147,7 +140,7 @@ export class EventController {
         this.transitions.scheduleActivation(
           object.transitionKey,
           object.baseGain,
-          this.envelope(object).fadeInMs,
+          object.envelope.fadeInMs,
           this.#policy.curve,
         );
       }
@@ -175,7 +168,7 @@ export class EventController {
         });
         continue;
       }
-      const fadeDurationMs = this.envelope(object).fadeOutMs;
+      const fadeDurationMs = object.envelope.fadeOutMs;
       if (
         !object.removalScheduled &&
         this.#timestampMs >= endTimeMs - fadeDurationMs
@@ -224,7 +217,7 @@ export class EventController {
         foregroundSalience: object.plan.foregroundSalience,
         foregroundEnvelope:
           object.baseGain > EPSILON
-            ? Math.max(0, Math.min(1, envelopeGain / object.baseGain))
+            ? Math.max(0, Math.min(1, gain / object.baseGain))
             : 0,
       };
     });
@@ -258,6 +251,7 @@ export class EventController {
       transitionKey: `event:${item.id}:gain`,
       removalScheduled: false,
       finishedPublished: false,
+      envelope: this.resolveEnvelope(item),
     });
   }
 
@@ -269,6 +263,7 @@ export class EventController {
     object.plan = structuredClone(item);
     object.activationTimeMs = item.activationTimeMs;
     object.durationMs = item.durationMs;
+    object.envelope = this.resolveEnvelope(item);
     object.replacement = undefined;
     if (
       object.lifecycle === 'active' &&
@@ -296,10 +291,11 @@ export class EventController {
   private beginRemoval(object: EventRuntimeObject): void {
     if (object.removalScheduled) return;
     object.removalScheduled = true;
+    const currentGain = this.transitions.getValue(object.transitionKey, 0);
     this.transitions.scheduleRemoval(
       object.transitionKey,
-      this.transitions.getValue(object.transitionKey, 0),
-      this.envelope(object).fadeOutMs,
+      currentGain,
+      currentGain > EPSILON ? object.envelope.fadeOutMs : 0,
       this.#policy.curve,
     );
   }
@@ -312,21 +308,12 @@ export class EventController {
     }));
   }
 
-  private envelope(object: EventRuntimeObject): {
-    fadeInMs: number;
-    fadeOutMs: number;
-  } {
-    const availableFadeMs = Math.max(
-      0,
-      object.durationMs - SHORT_EVENT_ENVELOPE.minimumAudiblePlateauMs,
-    );
-    const authoredFadeTotalMs =
-      SHORT_EVENT_ENVELOPE.fadeInMs + SHORT_EVENT_ENVELOPE.fadeOutMs;
-    const scale = Math.min(1, availableFadeMs / authoredFadeTotalMs);
-    return {
-      fadeInMs: SHORT_EVENT_ENVELOPE.fadeInMs * scale,
-      fadeOutMs: SHORT_EVENT_ENVELOPE.fadeOutMs * scale,
-    };
+  private resolveEnvelope(item: EventPlanItem): ResolvedAudioEnvelope {
+    return resolveAudioEnvelope(item.assetId, {
+      role: 'event',
+      durationMs: item.durationMs,
+      fallbackDurationMs: this.#policy.defaultDurationMs,
+    });
   }
 }
 

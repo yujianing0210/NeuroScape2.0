@@ -6,6 +6,7 @@ const candidates = [
   'python3.12',
   'python3.11',
   'python3',
+  'python',
 ].filter(Boolean);
 
 const python = candidates.find((candidate) => {

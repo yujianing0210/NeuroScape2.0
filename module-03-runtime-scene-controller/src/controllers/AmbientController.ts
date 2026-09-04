@@ -2,9 +2,11 @@ import type {
   AmbientPlanItem,
   AmbientState,
   ListenerState,
+  ResolvedAudioEnvelope,
   TransitionPolicy,
   Vector3,
 } from '@neuroscape/contracts';
+import { resolveAudioEnvelope } from '@neuroscape/contracts';
 import { clamp, distance, EPSILON, plannedDistanceGain } from '../core/math.js';
 import type { SemanticLocationMapper } from '../scene-graph/SemanticLocationMapper.js';
 import type { TransitionController } from './TransitionController.js';
@@ -25,6 +27,7 @@ interface AmbientRuntimeObject {
   lifecycle: 'waiting' | 'active' | 'finished';
   runtimeActivationMs?: number;
   runtimeFinishedMs?: number;
+  envelope: ResolvedAudioEnvelope;
 }
 
 export class AmbientController {
@@ -50,7 +53,6 @@ export class AmbientController {
   merge(items: readonly AmbientPlanItem[], policy: TransitionPolicy): void {
     this.#policy = policy;
     const incoming = new Map(items.map((item) => [item.id, item]));
-    const replacements: AmbientPlanItem[] = [];
     for (const object of this.#objects.values()) {
       const item = incoming.get(object.id);
       if (!item) {
@@ -59,9 +61,8 @@ export class AmbientController {
       }
       incoming.delete(object.id);
       if (!this.isCompatible(object, item)) {
-        this.#objects.delete(object.id);
-        this.transitions.release(object.transitionKey);
-        replacements.push(item);
+        object.replacement = structuredClone(item);
+        this.beginRemoval(object);
         continue;
       }
       object.targetGain = item.gain;
@@ -69,20 +70,25 @@ export class AmbientController {
       object.desiredActive = item.active;
       object.startMs = item.startMs ?? 0;
       object.endMs = item.endMs ?? Number.POSITIVE_INFINITY;
+      object.envelope = this.resolveEnvelope(item);
       object.pendingRemoval = false;
       object.replacement = undefined;
       const currentGain = this.transitions.getValue(object.transitionKey, 0);
+      if (!item.active) {
+        this.beginRemoval(object);
+        continue;
+      }
       this.transitions.scheduleGain(
         object.transitionKey,
         currentGain,
-        item.active ? item.gain : 0,
-        policy.defaultDurationMs,
+        item.gain,
+        currentGain > EPSILON
+          ? policy.defaultDurationMs
+          : object.envelope.fadeInMs,
         policy.curve,
       );
     }
-    [...incoming.values(), ...replacements].forEach((item) =>
-      this.create(item),
-    );
+    incoming.forEach((item) => this.create(item));
   }
 
   update(deltaTimeMs: number, _listener: ListenerState): void {
@@ -105,12 +111,25 @@ export class AmbientController {
           object.runtimeActivationMs = this.#timestampMs;
         if (nextLifecycle === 'finished')
           object.runtimeFinishedMs = this.#timestampMs;
-        this.transitions.scheduleGain(
-          object.transitionKey,
-          this.transitions.getValue(object.transitionKey, 0),
-          nextLifecycle === 'active' ? object.targetGain : 0,
-          nextLifecycle === 'finished' ? 0 : this.#policy.defaultDurationMs,
-          this.#policy.curve,
+        if (nextLifecycle === 'finished') this.beginRemoval(object, 0);
+        else
+          this.transitions.scheduleGain(
+            object.transitionKey,
+            this.transitions.getValue(object.transitionKey, 0),
+            object.targetGain,
+            object.envelope.fadeInMs,
+            this.#policy.curve,
+          );
+      }
+      if (
+        object.lifecycle === 'active' &&
+        Number.isFinite(object.endMs) &&
+        !object.pendingRemoval &&
+        this.#timestampMs >= object.endMs - object.envelope.fadeOutMs
+      ) {
+        this.beginRemoval(
+          object,
+          Math.max(0, object.endMs - this.#timestampMs),
         );
       }
     }
@@ -173,6 +192,7 @@ export class AmbientController {
       startMs: item.startMs ?? 0,
       endMs: item.endMs ?? Number.POSITIVE_INFINITY,
       lifecycle: 'waiting',
+      envelope: this.resolveEnvelope(item),
     };
     object.lifecycle = executionLifecycle(object, this.#timestampMs);
     if (object.lifecycle === 'active')
@@ -190,22 +210,40 @@ export class AmbientController {
       this.transitions.scheduleActivation(
         transitionKey,
         item.gain,
-        this.#policy.defaultDurationMs,
+        object.envelope.fadeInMs,
         this.#policy.curve,
       );
     }
   }
 
-  private beginRemoval(object: AmbientRuntimeObject): void {
+  private beginRemoval(
+    object: AmbientRuntimeObject,
+    requestedDurationMs?: number,
+  ): void {
     if (object.pendingRemoval) return;
+    object.envelope = this.resolveEnvelope(object.plan);
+    const durationMs = requestedDurationMs ?? object.envelope.fadeOutMs;
     object.pendingRemoval = true;
     object.desiredActive = false;
+    const currentGain = this.transitions.getValue(object.transitionKey, 0);
     this.transitions.scheduleRemoval(
       object.transitionKey,
-      this.transitions.getValue(object.transitionKey, 0),
-      this.#policy.defaultDurationMs,
+      currentGain,
+      currentGain > EPSILON ? durationMs : 0,
       this.#policy.curve,
     );
+  }
+
+  private resolveEnvelope(item: AmbientPlanItem): ResolvedAudioEnvelope {
+    const startMs = item.startMs ?? 0;
+    const endMs = item.endMs ?? Number.POSITIVE_INFINITY;
+    return resolveAudioEnvelope(item.assetId, {
+      role: 'ambient',
+      durationMs: Number.isFinite(endMs)
+        ? Math.max(0, endMs - startMs)
+        : undefined,
+      fallbackDurationMs: this.#policy.defaultDurationMs,
+    });
   }
 
   private isCompatible(

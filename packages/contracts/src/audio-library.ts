@@ -2,10 +2,19 @@ import libraryData from './audio_library.json' with { type: 'json' };
 import type { PlaybackPolicy } from './scene-journey-plan.js';
 
 export type AudioLibraryLayer = 'ambient' | 'event' | 'action';
-export type AudioLibraryScene = 'forest' | 'ocean_beach' | 'citypark' | 'common' | 'control';
+export type AudioLibraryScene =
+  'forest' | 'ocean_beach' | 'citypark' | 'common' | 'control';
 export type AudioDistance = 'near' | 'middle' | 'far' | 'wide';
 export type AudioMotionType =
-  'none' | 'drift' | 'overhead_pass' | 'local_random' | 'approach_recede';
+  | 'none'
+  | 'stationary'
+  | 'drift'
+  | 'overhead_pass'
+  | 'local_random'
+  | 'approach'
+  | 'recede'
+  | 'approach_recede'
+  | 'approach-recede';
 
 export type AudioVector3 = [number, number, number];
 
@@ -102,6 +111,132 @@ export const audioLibraryById: ReadonlyMap<string, AudioLibraryAsset> = new Map(
   audioLibrary.map((asset) => [asset.asset_id, asset]),
 );
 
+export type AudioEnvelopeRole = 'ambient' | 'event' | 'action';
+
+export interface ResolvedAudioEnvelope {
+  fadeInMs: number;
+  fadeOutMs: number;
+  minimumPlateauMs: number;
+  source: 'authored' | 'category-default' | 'transition-fallback';
+}
+
+export interface AudioEnvelopeContext {
+  role: AudioEnvelopeRole;
+  /** Finite planned lifecycle. Omit for an open-ended bed. */
+  durationMs?: number;
+  /** Existing transition policy used only for non-canonical compatibility IDs. */
+  fallbackDurationMs: number;
+}
+
+const SHORT_EVENT_ENVELOPE = Object.freeze({
+  fadeInMs: 750,
+  fadeOutMs: 1_000,
+  minimumPlateauMs: 3_000,
+});
+
+const LONG_BED_ENVELOPE = Object.freeze({
+  fadeInMs: 5_000,
+  fadeOutMs: 5_000,
+  minimumPlateauMs: 5_000,
+});
+
+/**
+ * Resolve one deterministic, asset-aware entry/exit envelope. Canonical
+ * authored metadata wins; category defaults only repair invalid metadata; and
+ * compatibility aliases retain the existing transition-policy fallback.
+ */
+export function resolveAudioEnvelope(
+  assetId: string,
+  context: AudioEnvelopeContext,
+): ResolvedAudioEnvelope {
+  const asset = audioLibraryById.get(assetId);
+  const fallbackDurationMs = finiteNonNegative(context.fallbackDurationMs) ?? 0;
+  const longBed =
+    asset?.layer === 'ambient' && asset.playback_contract?.mode === 'long_bed';
+  const category = longBed
+    ? LONG_BED_ENVELOPE
+    : context.role === 'event'
+      ? SHORT_EVENT_ENVELOPE
+      : {
+          fadeInMs: fallbackDurationMs,
+          fadeOutMs: fallbackDurationMs,
+          minimumPlateauMs: Math.min(1_000, fallbackDurationMs),
+        };
+  const authoredFadeInMs = asset
+    ? finiteNonNegative(asset.fade_in_sec * 1_000)
+    : undefined;
+  const authoredFadeOutMs = asset
+    ? finiteNonNegative(asset.fade_out_sec * 1_000)
+    : undefined;
+  const source = !asset
+    ? 'transition-fallback'
+    : authoredFadeInMs !== undefined && authoredFadeOutMs !== undefined
+      ? 'authored'
+      : 'category-default';
+  const fadeInMs = asset
+    ? (authoredFadeInMs ?? category.fadeInMs)
+    : fallbackDurationMs;
+  const fadeOutMs = asset
+    ? (authoredFadeOutMs ?? category.fadeOutMs)
+    : fallbackDurationMs;
+  return clampAudioEnvelope(
+    fadeInMs,
+    fadeOutMs,
+    category.minimumPlateauMs,
+    context.durationMs,
+    source,
+  );
+}
+
+function clampAudioEnvelope(
+  fadeInMs: number,
+  fadeOutMs: number,
+  requestedMinimumPlateauMs: number,
+  durationMs: number | undefined,
+  source: ResolvedAudioEnvelope['source'],
+): ResolvedAudioEnvelope {
+  const duration = finiteNonNegative(durationMs);
+  if (duration === undefined)
+    return {
+      fadeInMs,
+      fadeOutMs,
+      minimumPlateauMs: requestedMinimumPlateauMs,
+      source,
+    };
+  if (duration === 0)
+    return { fadeInMs: 0, fadeOutMs: 0, minimumPlateauMs: 0, source };
+  const minimumPlateauMs =
+    duration > requestedMinimumPlateauMs
+      ? requestedMinimumPlateauMs
+      : duration * 0.5;
+  const availableFadeMs = Math.max(0, duration - minimumPlateauMs);
+  const requestedFadeMs = fadeInMs + fadeOutMs;
+  const scale =
+    requestedFadeMs > availableFadeMs && requestedFadeMs > 0
+      ? availableFadeMs / requestedFadeMs
+      : 1;
+  return {
+    fadeInMs: fadeInMs * scale,
+    fadeOutMs: fadeOutMs * scale,
+    minimumPlateauMs,
+    source,
+  };
+}
+
+function finiteNonNegative(value: number | undefined): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+export function hasMeaningfulAuthoredMotion(asset: AudioLibraryAsset): boolean {
+  const motion = asset.default_motion;
+  if (motion.type === 'none' || motion.type === 'stationary') return false;
+  if (motion.type === 'local_random') return (motion.radius ?? 0) > 0;
+  if (!motion.start || !motion.end) return false;
+  return motion.start.some((value, index) => value !== motion.end![index]);
+}
+
 /** Materialize the authored default; Runtime must never infer playback semantics. */
 export function canonicalPlaybackPolicy(
   assetId: string,
@@ -111,13 +246,21 @@ export function canonicalPlaybackPolicy(
   if (!asset) throw new Error(`Unknown canonical audio asset: ${assetId}.`);
   const contract = asset.playback_contract;
   if (!contract)
-    throw new Error(`Canonical audio asset ${assetId} has no playback_contract.`);
+    throw new Error(
+      `Canonical audio asset ${assetId} has no playback_contract.`,
+    );
   if (contract.mode === 'long_bed')
     return { mode: 'loop', durationPolicy: 'loop-until-end' };
   if (contract.mode === 'burst') {
     const repeatCount = contract.repeat_count_options[0];
-    if (repeatCount === undefined || !Number.isInteger(repeatCount) || repeatCount <= 0)
-      throw new Error(`Canonical audio asset ${assetId} has no valid repeat count.`);
+    if (
+      repeatCount === undefined ||
+      !Number.isInteger(repeatCount) ||
+      repeatCount <= 0
+    )
+      throw new Error(
+        `Canonical audio asset ${assetId} has no valid repeat count.`,
+      );
     return {
       mode: 'repeat',
       durationPolicy: 'truncate-at-end',
@@ -138,7 +281,8 @@ export function validateCanonicalPlaybackPolicy(
   // ids, when present, must obey their authored metadata.
   if (!asset) return [];
   const contract = asset.playback_contract;
-  if (!contract) return [`Canonical audio asset ${assetId} has no playback_contract.`];
+  if (!contract)
+    return [`Canonical audio asset ${assetId} has no playback_contract.`];
   const expectedMode =
     contract.mode === 'long_bed'
       ? 'loop'
@@ -148,13 +292,27 @@ export function validateCanonicalPlaybackPolicy(
   const errors: string[] = [];
   const normalizedMode =
     playback.mode === 'repeat-count' ? 'repeat' : playback.mode;
-  if (normalizedMode !== expectedMode && playback.mode !== 'loop-until-arrival')
-    errors.push(`${assetId} playback mode ${playback.mode} is not supported; expected ${expectedMode}.`);
+  const motionBoundLoop =
+    normalizedMode === 'loop' &&
+    expectedMode === 'once' &&
+    contract.requires_gain_motion &&
+    hasMeaningfulAuthoredMotion(asset) &&
+    playback.durationPolicy === 'loop-until-end';
+  if (
+    normalizedMode !== expectedMode &&
+    playback.mode !== 'loop-until-arrival' &&
+    !motionBoundLoop
+  )
+    errors.push(
+      `${assetId} playback mode ${playback.mode} is not supported; expected ${expectedMode}.`,
+    );
   if (
     playback.mode === 'repeat' &&
     playback.repeatCount !== undefined &&
     !contract.repeat_count_options.includes(playback.repeatCount)
   )
-    errors.push(`${assetId} repeatCount ${playback.repeatCount} is not authored.`);
+    errors.push(
+      `${assetId} repeatCount ${playback.repeatCount} is not authored.`,
+    );
   return errors;
 }

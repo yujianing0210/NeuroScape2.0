@@ -80,6 +80,24 @@ describe('gain and playback scheduling', () => {
     expect(target.activationPlayed).toBe(true);
     expect(scheduler.startBurst(target, fakeBuffer, 2, 2, 0.5)).toBe(false);
   });
+  it('distributes a finite burst across its motion lifecycle', () => {
+    const context = new FakeAudioContext();
+    const scheduler = new PlaybackScheduler(
+      context as unknown as BaseAudioContext,
+    );
+    const target: PlaybackTarget = {
+      input: new FakeNode() as unknown as AudioNode,
+      source: null,
+      playing: false,
+      activationPlayed: false,
+    };
+    expect(scheduler.startBurst(target, fakeBuffer, 2, 2, 0.8, 16.6)).toBe(
+      true,
+    );
+    expect(context.sources.map((source) => source.starts[0])).toEqual([
+      2, 17.6,
+    ]);
+  });
 
   it('schedules a bounded one-shot envelope and graceful release', () => {
     const parameter = new FakeAudioParam();

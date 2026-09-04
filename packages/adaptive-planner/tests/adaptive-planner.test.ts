@@ -9,6 +9,7 @@ import {
   mergePlanPatch,
   mockCalibrationProfile,
   phase1Config,
+  type AdaptiveCheckpointResult,
   type SoundscapePlanPatch,
 } from '../src/index.js';
 
@@ -662,7 +663,7 @@ describe('adaptive planner Phase 1', () => {
         }),
       },
     });
-    let proposal: any;
+    let proposal: AdaptiveCheckpointResult | undefined;
     for (const epoch of createMockTbrReplay()) {
       const result = await planner.ingest(epoch);
       if (result?.futurePatch?.journeyUpdate) {

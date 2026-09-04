@@ -249,14 +249,14 @@ export function validateAndProjectPatch(options: {
       const payload = element.payload as {
         activationTimeMs: number;
         durationMs: number;
-        trajectory: Array<{ timestampMs: number }>;
+        trajectory?: Array<{ timestampMs: number }>;
       };
       if (
         payload.activationTimeMs + payload.durationMs >
           basePlan.profile.durationMs ||
-        payload.trajectory.some(
+        payload.trajectory?.some(
           (waypoint) => waypoint.timestampMs > basePlan.profile.durationMs,
-        )
+        ) === true
       )
         violations.push('event_payload_ends_after_session_end');
     }

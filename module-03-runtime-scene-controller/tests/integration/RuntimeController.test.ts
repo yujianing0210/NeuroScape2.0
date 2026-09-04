@@ -38,7 +38,7 @@ describe('RuntimeController Phase 2 integration', () => {
     ]);
   });
 
-  it('reuses compatible sounds and applies replacements immediately', () => {
+  it('reuses compatible sounds and fades replacements across the policy window', () => {
     const { controller } = createRuntimeHarness();
     controller.initialize(sceneJourneyPlanFixture);
     controller.update(2_000);
@@ -49,6 +49,10 @@ describe('RuntimeController Phase 2 integration', () => {
     controller.applyPlan({
       ...sceneJourneyPlanFixture,
       planId: 'compatible',
+      userJourney: {
+        goal: 'stay at the entry',
+        waypoints: [{ locationId: 'forest_entry', arrivalTimeMs: 0 }],
+      },
       soundscape: {
         ...sceneJourneyPlanFixture.soundscape,
         ambient: sceneJourneyPlanFixture.soundscape.ambient.map((item) =>
@@ -67,6 +71,10 @@ describe('RuntimeController Phase 2 integration', () => {
     controller.applyPlan({
       ...sceneJourneyPlanFixture,
       planId: 'incompatible',
+      userJourney: {
+        goal: 'stay at the entry',
+        waypoints: [{ locationId: 'forest_entry', arrivalTimeMs: 0 }],
+      },
       soundscape: {
         ...sceneJourneyPlanFixture.soundscape,
         ambient: sceneJourneyPlanFixture.soundscape.ambient.map((item) =>
@@ -79,7 +87,7 @@ describe('RuntimeController Phase 2 integration', () => {
     const fadingFrame = controller.update(1_000);
     expect(
       fadingFrame.ambient.find((item) => item.id === 'forest-bed')!.assetId,
-    ).toBe('ambient.replacement');
+    ).toBe('ambient.forest-wind');
     controller.update(1_000);
     const replacedFrame = controller.update(1);
     expect(

@@ -40,6 +40,7 @@ export class PlaybackScheduler {
     when: number,
     repeatCount: number,
     repeatGapSeconds: number,
+    lifecycleSeconds?: number,
   ): boolean {
     if (target.playing || target.activationPlayed) return false;
     const count = Math.max(1, Math.floor(repeatCount));
@@ -47,6 +48,12 @@ export class PlaybackScheduler {
     target.sources = new Set();
     target.playing = true;
     target.activationPlayed = true;
+    const minimumInterval = buffer.duration + repeatGapSeconds;
+    const distributedInterval =
+      lifecycleSeconds !== undefined && count > 1
+        ? Math.max(0, lifecycleSeconds - buffer.duration) / (count - 1)
+        : minimumInterval;
+    const interval = Math.max(minimumInterval, distributedInterval);
     for (let index = 0; index < count; index += 1) {
       const source = this.context.createBufferSource();
       source.buffer = buffer;
@@ -63,7 +70,7 @@ export class PlaybackScheduler {
           target.onPlaybackEnded?.();
         }
       };
-      source.start(start + index * (buffer.duration + repeatGapSeconds));
+      source.start(start + index * interval);
     }
     return true;
   }

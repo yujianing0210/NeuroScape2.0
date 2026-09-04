@@ -163,7 +163,8 @@ export class AudioEngine {
             if (settled) return;
             settled = true;
             globalThis.clearTimeout(timeout);
-            error ? reject(error) : resolve();
+            if (error) reject(error);
+            else resolve();
           };
           const timeout = globalThis.setTimeout(
             () =>

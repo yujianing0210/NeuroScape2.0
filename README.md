@@ -1,17 +1,152 @@
-# NeuroScape
+# NeuroScape 2.0
 
-## Questionnaire study flow
+NeuroScape is a local-first research prototype for EEG-informed, spatial-audio
+meditation. It combines Muse / Mind Monitor calibration, a constrained adaptive
+planner, an authoritative scene runtime, Web Audio spatialization, study
+questionnaires, and reproducible session artifacts in one application.
 
-The local study UI keeps Questionnaire v1.1 inside the participant flow. After calibration, hand the device to the participant for **Calibration Reflection** (C1–C3). Before each prescribed condition, the participant completes the neutral **Session 1/2** M1 screen; EEG timing and meditation audio begin only after that response is saved. At session end, core EEG/audio artifacts are uploaded before the participant completes M1 post, Q1–Q6, and the comfort check. The session receives `_COMPLETE.json` only after that questionnaire is saved.
+> NeuroScape is a research tool, not a medical device. EEG-derived values are
+> participant-specific operational signals and must not be interpreted as
+> diagnoses or objective psychological labels.
 
-After both counterbalanced conditions, the participant completes F1–F3 without seeing true condition labels. The handoff screen then tells them to return the device. The researcher can open the participant dashboard from that screen or Study Home. The dashboard maps Session 1/2 to Adaptive/Non-Adaptive, shows raw item values and transparent differences, and can be printed with **Print / Save PDF**.
+## Current study flow
 
-Study progress reloads when a pseudonymous participant ID is entered. If saving fails, keep the questionnaire open and press **Submit** again; do not restart the meditation. Generated files are local:
+The participant-facing workflow uses Questionnaire 2.0 and two counterbalanced
+conditions:
 
-Study Home recommends the counterbalanced order from the numeric participant ID: odd IDs use **A/B (Non-Adaptive → Adaptive)** and even IDs use **B/A (Adaptive → Non-Adaptive)**. An investigator may override this before Session 1 starts; the recommended order, actual order, and assignment source are saved in `participant-study.json`. The order is locked once a session starts.
+1. Enter a pseudonymous participant ID and confirm the condition order.
+2. Complete Muse calibration and the C1-C3 calibration reflection.
+3. Complete the M1 pre-session item, then run Session 1.
+4. Complete M1 post, Q1-Q6, and the comfort check.
+5. Repeat the pre/session/post flow for Session 2.
+6. Complete F1-F3, return the device to the researcher, and review or print the
+   participant report.
+
+Odd numeric participant IDs default to **A/B (Non-Adaptive -> Adaptive)**;
+even IDs default to **B/A (Adaptive -> Non-Adaptive)**. An investigator may
+override the recommendation before Session 1 begins. The chosen order is locked
+after a session starts and is persisted in `participant-study.json`.
+
+Questionnaire responses are used only for persistence, reporting, and interview
+support. They are never sent to EEG interpretation, planning, or adaptive audio.
+
+### Developer Quick Test Mode
+
+Open **Developer / Testing** on Study Home to enable Quick Test Mode. It is off
+by default. Explicit skip controls replace the five-minute calibration and
+ten-minute session waits, while questionnaires, persistence, finalization, and
+reports follow the production sequence.
+
+Quick Test records use `studyMode: "quick_test"` and must use dedicated test
+participant IDs. The application prevents Quick Test and production data from
+sharing one participant record. Quick Test does not synthesize physiological
+EEG values.
+
+## What is in this version
+
+- Live Muse OSC intake, calibration, quality review, and 10-second log-TBR
+  epochs.
+- Adaptive and fixed non-adaptive ten-minute study conditions.
+- Deterministic, constrained plan generation with separate Decision 1 and
+  Decision 2 stages.
+- Authoritative `RuntimeWorldState` snapshots shared by Three.js and Web Audio.
+- Asset-authored event motion, deterministic local motion, motion-bound
+  lifecycles, and burst playback distributed across the event lifecycle.
+- Asset-aware ambient and event envelopes with safe handling for short sounds,
+  replacement, and removal.
+- Local recording, replay, participant comparison, EEG / TBR timelines, sound
+  exposure lanes, and printable reports.
+- Offline mock and deterministic replay paths for development without EEG
+  hardware.
+
+`RuntimeWorldState` is the only spatial source of truth. The browser does not
+reinterpret EEG, run planner reasoning, or independently simulate source
+movement.
 
 ```text
-study-results/P007/
+Muse / Mind Monitor
+        |
+        v
+Module 01: calibration + NeuroState
+        |
+        v
+Module 02: constrained adaptive planner -> SceneJourneyPlan
+        |
+        v
+Module 03: runtime scene controller -> RuntimeWorldState
+        |
+        v
+Module 04: React + Three.js + Web Audio / HRTF
+        |
+        v
+Study recorder, replay, comparison, and reports
+```
+
+## Requirements
+
+- Git
+- Node.js `20.19+` (Node 22 LTS recommended) and npm
+- Python `3.11+` for calibration and live EEG
+- Muse 2 with Mind Monitor for real EEG sessions (optional for mock development)
+- An OpenAI API key for the live adaptive planner (optional for offline mock)
+
+## Install
+
+```bash
+git clone -b main https://github.com/yujianing0210/NeuroScape2.0.git
+cd NeuroScape2.0
+npm install
+npm run calibration:setup
+```
+
+Create the local environment file:
+
+```bash
+cp .env.example .env
+```
+
+Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Add `OPENAI_API_KEY` to `.env` for live planning. The key is loaded only by the
+localhost study-recorder / planner service; it is not bundled into Vite or sent
+to the browser.
+
+If Python is installed under a nonstandard executable name, set
+`NEUROSCAPE_PYTHON` before running `npm run calibration:setup`.
+
+## Run
+
+```bash
+npm run dev
+```
+
+This starts:
+
+- Muse calibration and OSC service: `http://127.0.0.1:8000`
+- Mind Monitor OSC listener: UDP `5000`
+- Study recorder and OpenAI proxy: `http://127.0.0.1:8787`
+- Vite frontend: normally `http://localhost:5173`
+
+For real EEG, connect the Mind Monitor phone and computer to a private network
+that permits device-to-device UDP. Enable raw EEG and OSC streaming in Mind
+Monitor, then use the IPv4 address displayed by the calibration page and port
+`5000`. Allow Python to receive local network traffic if the operating system
+prompts for permission.
+
+See [Muse calibration and live adaptive integration](docs/EEG_CALIBRATION_LIVE_INTEGRATION.md)
+for the calibration protocol, profile acceptance policy, and live epoch path.
+
+## Local data and privacy
+
+Study data is intentionally stored locally and excluded from Git:
+
+```text
+eeg-calibration/data/sessions/<calibration-id>/
+study-results/<participant-id>/
   participant-study.json
   questionnaire-long.csv
   participant-report.json
@@ -21,87 +156,37 @@ study-results/P007/
     questionnaire.json
     questionnaire.csv
     eeg-epochs.csv
-    ...
+    quick-test-metadata.json   # Quick Test only
     _COMPLETE.json
 ```
 
-Questionnaire answers are used only for persistence, reporting, and interview support. They are not passed to EEG interpretation, planning, or adaptive audio.
+Use pseudonymous participant IDs. Do not copy another researcher's `.env`,
+`.venv`, `study-results`, `eeg-calibration/data/sessions`, or generated
+participant PDF reports into a shared repository.
 
-### Developer Quick Test Mode
+A session receives `_COMPLETE.json` only after its required artifacts and
+questionnaire have been saved. If a questionnaire save fails, keep the page open
+and submit again; do not restart the meditation.
 
-Open **Developer / Testing** on Study Home and enable **Quick Test Mode**. It is OFF by default. In this mode, explicit skip buttons replace the five-minute calibration and ten-minute meditation waits, while C1–C3, M1, Q1–Q6, comfort, F1–F3, persistence, session finalization, and reports follow the normal study sequence. Each stage displays a developer quick summary for manual QA.
+## Repository structure
 
-Quick Test records use `studyMode: "quick_test"`; questionnaire and EEG comparison CSV exports include `study_mode`, and each session contains `quick-test-metadata.json`. No synthetic physiological EEG values are created. Use dedicated pseudonymous IDs for testing: the app prevents production and Quick Test data from sharing the same participant record.
-
-Individual session summaries and the participant report show Theta, Beta, and real-time log-TBR with the persisted calibration log-TBR baseline overlaid on the same track. The sound-exposure lanes and adaptive D1/D2 markers use the same fixed 0–10 minute axis. The participant report loads each session's saved recording and applies shared participant-level Y ranges across the two conditions; invalid EEG windows appear as gaps.
-
-Module 01/02 Phase 1 development and test instructions: [docs/MODULE_01_02_PHASE1.md](docs/MODULE_01_02_PHASE1.md).
-
-Audio-library items intentionally deferred for later asset curation are tracked in [docs/TBD_AUDIO_LIBRARY_GAPS.md](docs/TBD_AUDIO_LIBRARY_GAPS.md).
-
-NeuroScape is a neuroadaptive spatial-audio meditation runtime. Modules 03 and 04 are implemented: semantic plans become authoritative numerical world snapshots in Module 03, then Module 04 validates, visualizes, spatializes, records, and replays those snapshots in the browser.
-
-```text
-Module 01 → NeuroState ┐
-Module 02 → SceneJourneyPlan → Module 03 → RuntimeWorldState
-                              └───────────────┬───────────────┘
-                                              ↓
-                               Module 04 Runtime Store
-                         React + Three.js + Web Audio/HRTF
-```
-
-`RuntimeWorldState` is the only spatial source of truth. The browser never interprets EEG, executes planner reasoning, or simulates source movement.
-
-## Quick start
-
-```bash
-npm install
-npm run calibration:setup
-npm run dev
-```
-
-Python 3.11+ is required for Muse calibration and live EEG. See
-[Muse calibration and live adaptive integration](docs/EEG_CALIBRATION_LIVE_INTEGRATION.md)
-for Mind Monitor setup, profile handoff, and the live 10-second epoch pipeline.
-The existing mock modes remain available without EEG hardware.
-
-Put `OPENAI_API_KEY` in a repository-root `.env` file (see `.env.example`). `npm run dev` loads it only in the localhost backend; the key is never bundled into Vite or sent to the browser.
-
-Open the displayed Vite URL, enter a participant ID and duration, then select
-**Start Muse calibration**. Development-only mock and diagnostic entry points
-remain under the collapsed **Developer tools** section. Adaptive sessions
-automatically save study artifacts under `study-results/` and also expose a ZIP
-download on the Summary page.
-
-## Set up on another computer
-
-Install Git, Node.js 20.19+ (Node 22 LTS recommended), npm, and Python 3.11+.
-Then run:
-
-```bash
-git clone -b feature/module-01-02-rebuild https://github.com/yujianing0210/NeuroScape2.0.git
-cd NeuroScape2.0
-npm install
-npm run calibration:setup
-cp .env.example .env
-```
-
-Edit `.env` and replace `your_openai_api_key_here` with a valid API key. Start
-all three local services with:
-
-```bash
-npm run dev
-```
-
-Open the Vite URL printed in the terminal (normally `http://localhost:5173`).
-For real EEG, connect the Mind Monitor phone and computer to a private Wi-Fi
-that permits device-to-device UDP. In Mind Monitor, enable RAW EEG and OSC
-streaming, then use the IPv4 address shown on the calibration page and UDP port
-`5000`. macOS/Windows may ask for permission for Python to accept incoming
-network traffic; allow it. Do not copy another researcher's `.env`, `.venv`,
-`study-results`, or `eeg-calibration/data/sessions` directories.
+| Path | Responsibility |
+| --- | --- |
+| `eeg-calibration/` | Muse OSC intake, calibration protocol, signal processing, and profile persistence |
+| `packages/contracts/` | Shared plans, runtime states, recordings, and canonical audio metadata |
+| `packages/adaptive-planner/` | NeuroState interpretation, base plans, constrained decisions, patching, and semantic materialization |
+| `module-03-runtime-scene-controller/` | Numerical scene state, lifecycle, trajectories, gains, and validation |
+| `frontend/` | Study UI, Three.js, Web Audio / HRTF, recording, replay, and reporting |
+| `study-recorder-server/` | Local artifact storage and OpenAI proxy |
+| `study-control/` | Approved non-adaptive control trajectory and manifest |
+| `data/mock/` | Explicit development-only calibration and raw EEG fixtures |
+| `docs/` | Architecture, implementation notes, and operator guidance |
+| `SystemDesignMarkdown/` | Source system-design specifications |
+| `UI1.0reference/` | Legacy UI reference material |
 
 ## Validation
+
+Run the complete project checks before a study build:
 
 ```bash
 npm run lint
@@ -110,6 +195,11 @@ npm run test
 npm run build
 ```
 
-See [End-to-End Development Guide](docs/END_TO_END_DEVELOPMENT.md) for architecture, protocol, audio assets, demo operation, diagnostics, and upstream integration.
+The main end-to-end and operator references are:
 
-The source-of-truth specifications in `SystemDesign/` and legacy visual references in `UIreference/` are preserved unchanged.
+- [End-to-End Development Guide](docs/END_TO_END_DEVELOPMENT.md)
+- [Module 01/02 Phase 1](docs/MODULE_01_02_PHASE1.md)
+- [EEG Calibration and Live Integration](docs/EEG_CALIBRATION_LIVE_INTEGRATION.md)
+- [Audio Library Gaps](docs/TBD_AUDIO_LIBRARY_GAPS.md)
+- [Motion-Bound Event Playback](docs/NeuroScape_Codex_Instruction_Step1_Motion_Bound_Event_Playback.md)
+- [Asset-Aware Fades](docs/NeuroScape_Codex_Instruction_Step2_Asset_Aware_Fades.md)

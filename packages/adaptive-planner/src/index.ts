@@ -11,4 +11,5 @@ export * from './types.js';
 export * from './base-plan.js';
 export * from './patching.js';
 export * from './semantic-materializer.js';
+export * from './event-motion-resolver.js';
 export * from './reflection.js';

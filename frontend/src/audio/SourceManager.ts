@@ -362,6 +362,14 @@ export class SourceManager {
       }
       if (source.playbackState !== 'loading') return;
       const startAt = this.#audioTimeFor(timestampMs);
+      const sessionStartMs = this.#sessionNow(
+        timestampMs,
+        loadRequestedAtAudioTime,
+      );
+      const remainingLifecycleSeconds =
+        playback.spreadAcrossLifecycle && source.plannedEndMs !== undefined
+          ? Math.max(0, source.plannedEndMs - sessionStartMs) / 1_000
+          : undefined;
       let started: boolean;
       try {
         started =
@@ -372,6 +380,7 @@ export class SourceManager {
                 startAt,
                 playback.repeatCount!,
                 playback.repeatGapMs! / 1_000,
+                remainingLifecycleSeconds,
               )
             : this.#playback.start(
                 source,
@@ -397,7 +406,11 @@ export class SourceManager {
         this.#onChange();
         return;
       }
-      if (started && (playback.mode === 'repeat' || playback.mode === 'repeat-count') && playback.perRepeatGain) {
+      if (
+        started &&
+        (playback.mode === 'repeat' || playback.mode === 'repeat-count') &&
+        playback.perRepeatGain
+      ) {
         this.#gains.applyBurstSequence(
           source.gainNode.gain,
           playback.perRepeatGain,
@@ -408,11 +421,7 @@ export class SourceManager {
       }
       if (started) {
         source.playbackState = 'playing';
-        source.audioStartMs = Math.max(
-          this.#latestTimestampMs,
-          timestampMs +
-            (this.#context.currentTime - loadRequestedAtAudioTime) * 1_000,
-        );
+        source.audioStartMs = Math.max(this.#latestTimestampMs, sessionStartMs);
         source.audioStartAudioTime = this.#context.currentTime;
         source.audioStartedPublished = true;
         this.#publish(source, 'AUDIO_STARTED', source.audioStartMs);

@@ -38,6 +38,44 @@ const decision = (
 });
 
 describe('semantic Decision 2 materializer', () => {
+  it('materializes an authored bird pass with motion-bound repeating playback', () => {
+    const basePlan = createForestBasePlan(phase1Config);
+    const patch = materializeSemanticDecision2({
+      adaptationId: 'bird-motion',
+      output: {
+        status: 'CHANGE_PROPOSED',
+        destinationNodeId: null,
+        changes: [
+          {
+            operation: 'INSERT',
+            assetId: 'forest_bird_far_01',
+            targetElementId: null,
+            semanticRole: 'event',
+            mixIntent: 'default',
+          },
+        ],
+        selectedAssetIds: ['forest_bird_far_01'],
+        reasonCodes: [],
+        rationale: 'test motion-bound event',
+      },
+      decision: decision('within-scene'),
+      basePlan,
+      nowMs: 200_000,
+      config: phase1Config,
+    });
+    const event = patch.operations[0]?.insertedElement?.payload as
+      import('@neuroscape/contracts').EventPlanItem | undefined;
+    expect(event?.motion).toMatchObject({ motionMode: 'pass-by' });
+    expect(event?.motion?.startPosition).not.toEqual(
+      event?.motion?.endPosition,
+    );
+    expect(event?.durationMs).toBe(6_000);
+    expect(event?.playback).toEqual({
+      mode: 'loop',
+      durationPolicy: 'loop-until-end',
+    });
+  });
+
   it('resolves authored playback/gain and commits a canonical adjacent journey projection', () => {
     const basePlan = createForestBasePlan(phase1Config);
     const output: Decision2SemanticOutput = {

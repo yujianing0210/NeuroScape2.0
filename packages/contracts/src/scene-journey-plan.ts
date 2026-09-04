@@ -9,14 +9,12 @@ export interface PlaybackPolicy {
   repeatCount?: number;
   repeatGapMs?: number;
   perRepeatGain?: number[];
+  /** Evenly distribute a finite burst over the remaining planned lifecycle. */
+  spreadAcrossLifecycle?: boolean;
 }
 
 export type EventMotionMode =
-  | 'stationary'
-  | 'drift'
-  | 'pass-by'
-  | 'orbit-arc'
-  | 'approach-recede';
+  'stationary' | 'drift' | 'pass-by' | 'orbit-arc' | 'approach-recede';
 
 export interface EventMotion {
   motionMode: EventMotionMode;

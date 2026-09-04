@@ -36,11 +36,15 @@ eeg-calibration/data/sessions/
 
 # Coverage
 coverage/
+.pytest_cache/
 
 # Temporary
 tmp/
 temp/
 study-results/
+
+# Generated participant reports
+NeuroScape_P*.pdf
 
 # Mac resource forks
 ._*

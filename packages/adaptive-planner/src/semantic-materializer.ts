@@ -10,6 +10,7 @@ import type { BasePlanElement, BaseScenePlan } from './base-plan.js';
 import type { AdaptivePlannerConfig } from './config.js';
 import type { FuturePatchOperation, FutureScenePatch } from './patching.js';
 import type { AdaptationDecision, Decision2SemanticOutput } from './types.js';
+import { resolveEventMotionPlayback } from './event-motion-resolver.js';
 
 export const SEMANTIC_MATERIALIZER_VERSION = 'semantic_materializer_v1';
 export const TRAVERSAL_DURATION_PRESETS_MS = Object.freeze({
@@ -51,13 +52,19 @@ function insertedElement(
   const asset = audioLibraryById.get(assetId);
   if (!asset?.playback_contract) return undefined;
   const gain = gainFor(assetId, mix);
-  const playback = canonicalPlaybackPolicy(assetId, gain);
+  const eventResolution =
+    asset.layer === 'event'
+      ? resolveEventMotionPlayback(asset, { elementId: id, gain })
+      : undefined;
+  const playback =
+    eventResolution?.playback ?? canonicalPlaybackPolicy(assetId, gain);
   const authoredLifecycleMs =
     (asset.playback_contract.resolved_lifecycle_sec ??
       asset.default_motion.duration ??
       asset.auto_delete_after_sec ??
       0) * 1_000;
   const durationMs =
+    eventResolution?.durationMs ??
     durationOverrideMs ??
     (asset.layer === 'ambient'
       ? base.profile.durationMs - startMs
@@ -99,12 +106,10 @@ function insertedElement(
             assetId,
             activationTimeMs: startMs,
             durationMs: endMs - startMs,
-            trajectory: [
-              { locationId, timestampMs: startMs },
-              { locationId, timestampMs: endMs },
-            ],
+            motion: eventResolution!.motion,
             interpolation: 'smoothstep' as const,
             trajectoryUpdatePolicy: 'replace-at-effective-time' as const,
+            distancePolicy: eventResolution!.distancePolicy,
             playback,
             gain,
             foregroundSalience,
